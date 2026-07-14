@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "lastUpdatedIso": "2026-07-13T21:06:21.757Z",
+  "settings": {
+    "title": "Main Rail Network",
+    "worldWidth": 2510,
+    "worldHeight": 1000
+  },
+  "stations": [
+    {
+      "id": "station-ef05a1eb-9c32-479f-a0f4-b10561f3b682",
+      "stationName": "Tilburg",
+      "stationNumber": 8,
+      "sectionInNumber": -1,
+      "sectionOutNumber": null,
+      "inbound": {
+        "x": 172.22222222222226,
+        "y": 533.3333333333335
+      },
+      "outbound": {
+        "x": 252.22222222222226,
+        "y": 533.3333333333335
+      },
+      "liquidFreightStationCount": 0,
+      "solidFreightStationCount": 0,
+      "freightStationSequence": [
+        {
+          "slotIndex": 1,
+          "stationType": "Freight",
+          "mode": "Unload",
+          "material": ""
+        },
+        {
+          "slotIndex": 2,
+          "stationType": "Freight",
+          "mode": "Load",
+          "material": ""
+        },
+        {
+          "slotIndex": 3,
+          "stationType": "Liquid",
+          "mode": "Load",
+          "material": ""
+        }
+      ],
+      "freightSectionMaterials": [],
+      "notes": ""
+    }
+  ],
+  "sections": [
+    {
+      "id": "section-7dfadfc0-7fe8-4ce8-8960-657ae2ffe432",
+      "sectionNumber": 1,
+      "sectionKind": "Curved",
+      "endpoint1": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": 200,
+          "y": 340
+        },
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": 400,
+          "y": 460
+        },
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-28fdae45-3e98-45f8-b6c7-0896ed0e8282",
+      "sectionNumber": 2,
+      "sectionKind": "Curved",
+      "endpoint1": {
+        "sectionNumber": 2,
+        "coordinate": {
+          "x": 100,
+          "y": 240
+        },
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 2,
+        "coordinate": {
+          "x": 300,
+          "y": 360
+        },
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    }
+  ],
+  "signals": []
+}

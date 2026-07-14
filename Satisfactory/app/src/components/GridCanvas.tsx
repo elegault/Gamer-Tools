@@ -1,0 +1,2146 @@
+import { useEffect, useMemo, useRef, useState, type JSX, type RefObject } from 'react'
+import { Circle, Group, Layer, Line, Rect, Stage, Text } from 'react-konva'
+import type Konva from 'konva'
+import type { MapDocument } from '../models/mapSchema'
+import { useEditorStore } from '../store/editorStore'
+
+type Size = {
+  width: number
+  height: number
+}
+
+function useContainerSize(): [RefObject<HTMLDivElement | null>, Size] {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [size, setSize] = useState<Size>({ width: 960, height: 640 })
+
+  useEffect(() => {
+    const element = containerRef.current
+    if (!element) {
+      return
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) {
+        return
+      }
+
+      setSize({
+        width: Math.max(320, Math.floor(entry.contentRect.width)),
+        height: Math.max(320, Math.floor(entry.contentRect.height)),
+      })
+    })
+
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
+  return [containerRef, size]
+}
+
+function snap(value: number, step: number): number {
+  return Math.round(value / step) * step
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  return Math.sqrt(dx * dx + dy * dy)
+}
+
+function getCurveBendLimits(chordLength: number): { min: number; max: number } {
+  const min = Math.max(30, Math.round(chordLength * 0.12))
+  const max = Math.min(480, Math.round(chordLength * 0.85))
+  return { min, max }
+}
+
+function getStationOutboundArrow(station: MapDocument['stations'][number]): string {
+  const dx = station.outbound.x - station.inbound.x
+  const dy = station.outbound.y - station.inbound.y
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? '->' : '<-'
+  }
+
+  return dy >= 0 ? 'v' : '^'
+}
+
+const STATION_CONNECTION_HALF_WIDTH = 86
+
+function getStationConnectionPoint(
+  station: MapDocument['stations'][number],
+  side: 'Left' | 'Right',
+): { x: number; y: number } {
+  const anchorX = (station.inbound.x + station.outbound.x) / 2
+  const anchorY = (station.inbound.y + station.outbound.y) / 2
+  return {
+    x: side === 'Left' ? anchorX - STATION_CONNECTION_HALF_WIDTH : anchorX + STATION_CONNECTION_HALF_WIDTH,
+    y: anchorY,
+  }
+}
+
+function getIntersectionConnectionPoints(
+  intersection: MapDocument['intersections'][number],
+): Array<{ side: 'Top' | 'Right' | 'Bottom' | 'Left'; x: number; y: number }> {
+  const arm = Math.max(40, intersection.armLength)
+  return [
+    { side: 'Top', x: intersection.center.x, y: intersection.center.y - arm },
+    { side: 'Right', x: intersection.center.x + arm, y: intersection.center.y },
+    { side: 'Bottom', x: intersection.center.x, y: intersection.center.y + arm },
+    { side: 'Left', x: intersection.center.x - arm, y: intersection.center.y },
+  ]
+}
+
+type SectionEndpointKey = 'endpoint1' | 'endpoint2'
+type SectionEndpointSide = 'Left' | 'Right'
+type SignalSocketRef = NonNullable<MapDocument['signals'][number]['socketA']>
+
+type EndpointSnapCandidate =
+  | { kind: 'station'; stationId: string; side: 'Left' | 'Right'; x: number; y: number }
+  | {
+      kind: 'section-endpoint'
+      sectionId: string
+      endpointKey: SectionEndpointKey
+      x: number
+      y: number
+    }
+
+function getSectionEndpointCoordinate(
+  section: MapDocument['sections'][number],
+  endpointKey: SectionEndpointKey,
+): { x: number; y: number } {
+  return endpointKey === 'endpoint1' ? section.endpoint1.coordinate : section.endpoint2.coordinate
+}
+
+function getOtherEndpointKey(endpointKey: SectionEndpointKey): SectionEndpointKey {
+  return endpointKey === 'endpoint1' ? 'endpoint2' : 'endpoint1'
+}
+
+function getSectionSignalSocketPoint(
+  section: MapDocument['sections'][number],
+  endpointKey: SectionEndpointKey,
+  side: SectionEndpointSide,
+): { x: number; y: number } {
+  const endpoint = getSectionEndpointCoordinate(section, endpointKey)
+  const opposite = getSectionEndpointCoordinate(section, getOtherEndpointKey(endpointKey))
+  const dx = opposite.x - endpoint.x
+  const dy = opposite.y - endpoint.y
+  const length = Math.max(1, Math.sqrt(dx * dx + dy * dy))
+  const tangentX = dx / length
+  const tangentY = dy / length
+  const normalX = -tangentY
+  const normalY = tangentX
+  const sideSign = side === 'Left' ? -1 : 1
+  const longitudinalOffset = 14
+  const lateralPadding = 10
+  const lateralJitter = ((section.sectionNumber % 3) - 1) * 2
+  const lateralOffset = lateralPadding + lateralJitter
+
+  return {
+    x: endpoint.x + tangentX * longitudinalOffset + normalX * sideSign * lateralOffset,
+    y: endpoint.y + tangentY * longitudinalOffset + normalY * sideSign * lateralOffset,
+  }
+}
+
+function signalSocketRefKey(ref: SignalSocketRef): string {
+  return `${ref.sectionId}:${ref.endpointKey}:${ref.side}`
+}
+
+function toDegrees(radians: number): number {
+  return (radians * 180) / Math.PI
+}
+
+function makeTrianglePoints(radius: number): number[] {
+  const halfBase = radius * 0.9
+  return [0, -radius, halfBase, radius * 0.9, -halfBase, radius * 0.9]
+}
+
+function getContentBounds(map: MapDocument): { width: number; height: number } {
+  let maxX = map.settings.worldWidth
+  let maxY = map.settings.worldHeight
+
+  for (const station of map.stations) {
+    maxX = Math.max(maxX, station.inbound.x, station.outbound.x)
+    maxY = Math.max(maxY, station.inbound.y, station.outbound.y)
+  }
+
+  for (const section of map.sections) {
+    maxX = Math.max(maxX, section.endpoint1.coordinate.x, section.endpoint2.coordinate.x)
+    maxY = Math.max(maxY, section.endpoint1.coordinate.y, section.endpoint2.coordinate.y)
+  }
+
+  for (const intersection of map.intersections) {
+    const arm = Math.max(40, intersection.armLength)
+    maxX = Math.max(maxX, intersection.center.x + arm)
+    maxY = Math.max(maxY, intersection.center.y + arm)
+  }
+
+  for (const signal of map.signals) {
+    maxX = Math.max(maxX, signal.coordinate.x)
+    maxY = Math.max(maxY, signal.coordinate.y)
+  }
+
+  return {
+    width: Math.max(map.settings.worldWidth, maxX + 80),
+    height: Math.max(map.settings.worldHeight, maxY + 80),
+  }
+}
+
+export function GridCanvas(): JSX.Element {
+  const map = useEditorStore((state) => state.map)
+  const zoom = useEditorStore((state) => state.zoom)
+  const setZoom = useEditorStore((state) => state.setZoom)
+  const activeTool = useEditorStore((state) => state.activeTool)
+  const addEntityAt = useEditorStore((state) => state.addEntityAt)
+  const selectEntity = useEditorStore((state) => state.selectEntity)
+  const selectedEntity = useEditorStore((state) => state.selectedEntity)
+  const moveStation = useEditorStore((state) => state.moveStation)
+  const moveSection = useEditorStore((state) => state.moveSection)
+  const moveIntersection = useEditorStore((state) => state.moveIntersection)
+  const moveSignal = useEditorStore((state) => state.moveSignal)
+  const updateSection = useEditorStore((state) => state.updateSection)
+  const connectionsLocked = useEditorStore((state) => state.connectionsLocked)
+  const disconnectSectionEndpointStation = useEditorStore((state) => state.disconnectSectionEndpointStation)
+  const connectSectionEndpointToStation = useEditorStore((state) => state.connectSectionEndpointToStation)
+
+  const [containerRef, size] = useContainerSize()
+  const hasAutoFitRef = useRef(false)
+  const [hoveredSectionId, setHoveredSectionId] = useState<string | null>(null)
+  const [snapPreview, setSnapPreview] = useState<{
+    endpointKey: 'endpoint1' | 'endpoint2'
+    stationId: string
+    side: 'Left' | 'Right'
+    x: number
+    y: number
+  } | null>(null)
+  const [hoveredStationPoint, setHoveredStationPoint] = useState<{
+    stationId: string
+    side: 'Left' | 'Right'
+    x: number
+    y: number
+    occupied: boolean
+  } | null>(null)
+  const previousStationSideOccupancyRef = useRef<Record<string, boolean>>({})
+  const [flashingStationSides, setFlashingStationSides] = useState<Record<string, boolean>>({})
+  const [draggedIntersectionId, setDraggedIntersectionId] = useState<string | null>(null)
+  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [isPanning, setIsPanning] = useState(false)
+  const panStartPointerRef = useRef<{ x: number; y: number } | null>(null)
+  const panStartOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const panDidMoveRef = useRef(false)
+  const endpointDragStateRef = useRef<
+    Partial<
+      Record<
+        SectionEndpointKey,
+        {
+          originX: number
+          originY: number
+          lastX: number
+          lastY: number
+          connectionKind: 'none' | 'station' | 'section'
+        }
+      >
+    >
+  >({})
+
+  const contentBounds = useMemo(() => getContentBounds(map), [map])
+  const worldWidth = contentBounds.width
+  const worldHeight = contentBounds.height
+  const gridStep = 100
+  const worldOffsetX = 40
+  const worldOffsetY = 40
+  const stageWidth = Math.max(size.width, worldWidth * zoom + worldOffsetX * 2)
+  const stageHeight = Math.max(size.height, worldHeight * zoom + worldOffsetY * 2)
+
+  const fineGridLines = useMemo(() => {
+    const lines: Array<[number, number, number, number]> = []
+
+    for (let x = 0; x <= worldWidth; x += gridStep) {
+      lines.push([x, 0, x, worldHeight])
+    }
+
+    for (let y = 0; y <= worldHeight; y += gridStep) {
+      lines.push([0, y, worldWidth, y])
+    }
+
+    return lines
+  }, [gridStep, worldHeight, worldWidth])
+
+  const mainGridLines = useMemo(() => {
+    const lines: Array<[number, number, number, number]> = []
+
+    for (let x = 0; x <= worldWidth; x += gridStep) {
+      lines.push([x, 0, x, worldHeight])
+    }
+
+    for (let y = 0; y <= worldHeight; y += gridStep) {
+      lines.push([0, y, worldWidth, y])
+    }
+
+    return lines
+  }, [gridStep, worldHeight, worldWidth])
+
+  const selectedSection = useMemo(() => {
+    if (selectedEntity?.entityType !== 'section') {
+      return null
+    }
+
+    return map.sections.find((section) => section.id === selectedEntity.id) ?? null
+  }, [map.sections, selectedEntity])
+
+  const selectedSignal = useMemo(() => {
+    if (selectedEntity?.entityType !== 'signal') {
+      return null
+    }
+
+    return map.signals.find((signal) => signal.id === selectedEntity.id) ?? null
+  }, [map.signals, selectedEntity])
+
+  const sectionEndpointGroups = useMemo(() => {
+    const grouped: Record<string, Array<{ sectionId: string; endpointKey: SectionEndpointKey; entranceMode: 'Allowed' | 'Blocked' }>> = {}
+
+    for (const section of map.sections) {
+      const endpoints: Array<{ key: SectionEndpointKey; x: number; y: number; entranceMode: 'Allowed' | 'Blocked' }> = [
+        {
+          key: 'endpoint1',
+          x: section.endpoint1.coordinate.x,
+          y: section.endpoint1.coordinate.y,
+          entranceMode: section.endpoint1.entranceMode,
+        },
+        {
+          key: 'endpoint2',
+          x: section.endpoint2.coordinate.x,
+          y: section.endpoint2.coordinate.y,
+          entranceMode: section.endpoint2.entranceMode,
+        },
+      ]
+
+      for (const endpoint of endpoints) {
+        const pointKey = `${Math.round(endpoint.x)}:${Math.round(endpoint.y)}`
+        if (!grouped[pointKey]) {
+          grouped[pointKey] = []
+        }
+
+        grouped[pointKey].push({
+          sectionId: section.id,
+          endpointKey: endpoint.key,
+          entranceMode: endpoint.entranceMode,
+        })
+      }
+    }
+
+    return grouped
+  }, [map.sections])
+
+  const signalSocketPoints = useMemo(() => {
+    const sockets: Array<{
+      ref: SignalSocketRef
+      key: string
+      x: number
+      y: number
+      sectionNumber: number
+      endpointKey: SectionEndpointKey
+      side: SectionEndpointSide
+      signalType: 'Block' | 'Path' | null
+    }> = []
+
+    for (const section of map.sections) {
+      const endpointKeys: SectionEndpointKey[] = ['endpoint1', 'endpoint2']
+      const sides: SectionEndpointSide[] = ['Left', 'Right']
+
+      for (const endpointKey of endpointKeys) {
+        const endpoint = endpointKey === 'endpoint1' ? section.endpoint1 : section.endpoint2
+        for (const side of sides) {
+          const ref: SignalSocketRef = { sectionId: section.id, endpointKey, side }
+          const point = getSectionSignalSocketPoint(section, endpointKey, side)
+          sockets.push({
+            ref,
+            key: signalSocketRefKey(ref),
+            x: point.x,
+            y: point.y,
+            sectionNumber: section.sectionNumber,
+            endpointKey,
+            side,
+            signalType: side === 'Left' ? endpoint.signal1 : endpoint.signal2,
+          })
+        }
+      }
+    }
+
+    return sockets
+  }, [map.sections])
+
+  const signalSocketLookup = useMemo(() => {
+    const lookup: Record<string, { x: number; y: number; sectionNumber: number }> = {}
+    for (const socket of signalSocketPoints) {
+      lookup[socket.key] = {
+        x: socket.x,
+        y: socket.y,
+        sectionNumber: socket.sectionNumber,
+      }
+    }
+    return lookup
+  }, [signalSocketPoints])
+
+  const junctionIndicators = useMemo(() => {
+    const indicators: Array<{
+      key: string
+      x: number
+      y: number
+      type: 'Merge' | 'Split' | 'Junction' | 'Undefined'
+      label: string
+      mergeDirectionRadians: number | null
+    }> = []
+
+    for (const [key, entries] of Object.entries(sectionEndpointGroups)) {
+      if (entries.length < 3) {
+        continue
+      }
+
+      const [xText, yText] = key.split(':')
+      const x = Number(xText)
+      const y = Number(yText)
+      const allowedCount = entries.filter((entry) => entry.entranceMode === 'Allowed').length
+      const blockedCount = entries.length - allowedCount
+
+      let type: 'Merge' | 'Split' | 'Junction' | 'Undefined' = 'Junction'
+      let mergeDirectionRadians: number | null = null
+      if (blockedCount >= 2 && allowedCount === 1) {
+        type = 'Merge'
+        const allowedEntry = entries.find((entry) => entry.entranceMode === 'Allowed')
+        if (allowedEntry) {
+          const allowedSection = map.sections.find((section) => section.id === allowedEntry.sectionId)
+          if (allowedSection) {
+            const oppositeEndpoint = getSectionEndpointCoordinate(
+              allowedSection,
+              getOtherEndpointKey(allowedEntry.endpointKey),
+            )
+            mergeDirectionRadians = Math.atan2(oppositeEndpoint.y - y, oppositeEndpoint.x - x)
+          }
+        }
+      } else if (allowedCount >= 2 && blockedCount === 1) {
+        type = 'Split'
+      }
+
+      indicators.push({ key, x, y, type, label: '', mergeDirectionRadians })
+    }
+
+    indicators.sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y))
+    const typeCounters: Record<'Merge' | 'Split' | 'Junction' | 'Undefined', number> = {
+      Merge: 0,
+      Split: 0,
+      Junction: 0,
+      Undefined: 0,
+    }
+
+    for (const indicator of indicators) {
+      typeCounters[indicator.type] += 1
+      indicator.label = `${indicator.type} ${typeCounters[indicator.type]}`
+    }
+
+    return indicators
+  }, [map.sections, sectionEndpointGroups])
+
+  const highlightedIntersectionEndpointKeys = useMemo(() => {
+    if (!draggedIntersectionId) {
+      return new Set<string>()
+    }
+
+    const intersection = map.intersections.find((item) => item.id === draggedIntersectionId)
+    if (!intersection) {
+      return new Set<string>()
+    }
+
+    const points = getIntersectionConnectionPoints(intersection)
+    const highlighted = new Set<string>()
+    const tolerance = 16
+
+    for (const section of map.sections) {
+      const endpoints: Array<{ key: SectionEndpointKey; x: number; y: number }> = [
+        { key: 'endpoint1', x: section.endpoint1.coordinate.x, y: section.endpoint1.coordinate.y },
+        { key: 'endpoint2', x: section.endpoint2.coordinate.x, y: section.endpoint2.coordinate.y },
+      ]
+
+      for (const endpoint of endpoints) {
+        const nearIntersectionPoint = points.some(
+          (point) => distance({ x: endpoint.x, y: endpoint.y }, point) <= tolerance,
+        )
+
+        if (nearIntersectionPoint) {
+          highlighted.add(`${section.id}:${endpoint.key}`)
+        }
+      }
+    }
+
+    return highlighted
+  }, [draggedIntersectionId, map.intersections, map.sections])
+
+  const stationSideOccupancy = useMemo(() => {
+    const occupancy: Record<string, number | null> = {}
+
+    for (const station of map.stations) {
+      occupancy[`${station.id}:Left`] = null
+      occupancy[`${station.id}:Right`] = null
+    }
+
+    for (const section of map.sections) {
+      const endpoint1Connection = section.endpoint1.stationConnection
+      if (endpoint1Connection) {
+        occupancy[`${endpoint1Connection.stationId}:${endpoint1Connection.side}`] = section.sectionNumber
+      }
+
+      const endpoint2Connection = section.endpoint2.stationConnection
+      if (endpoint2Connection) {
+        occupancy[`${endpoint2Connection.stationId}:${endpoint2Connection.side}`] = section.sectionNumber
+      }
+    }
+
+    return occupancy
+  }, [map.sections, map.stations])
+
+  function fitToViewport(): void {
+    const availableWidth = Math.max(320, size.width - worldOffsetX * 2)
+    const availableHeight = Math.max(320, size.height - worldOffsetY * 2)
+    const fitScale = Math.min(availableWidth / worldWidth, availableHeight / worldHeight)
+    setZoom(Math.max(0.1, Math.min(2.5, fitScale)))
+  }
+
+  useEffect(() => {
+    if (hasAutoFitRef.current) {
+      return
+    }
+
+    if (size.width <= 320 || size.height <= 320) {
+      return
+    }
+
+    hasAutoFitRef.current = true
+    fitToViewport()
+  }, [size.height, size.width, worldHeight, worldWidth])
+
+  useEffect(() => {
+    if (!hoveredSectionId) {
+      return
+    }
+
+    const stillExists = map.sections.some((section) => section.id === hoveredSectionId)
+    if (!stillExists) {
+      setHoveredSectionId(null)
+    }
+  }, [hoveredSectionId, map.sections])
+
+  useEffect(() => {
+    const currentOccupancy: Record<string, boolean> = {}
+
+    for (const station of map.stations) {
+      currentOccupancy[`${station.id}:Left`] = stationSideOccupancy[`${station.id}:Left`] !== null
+      currentOccupancy[`${station.id}:Right`] = stationSideOccupancy[`${station.id}:Right`] !== null
+    }
+
+    const previousOccupancy = previousStationSideOccupancyRef.current
+    const keysToFlash = Object.keys(currentOccupancy).filter(
+      (key) => previousOccupancy[key] === true && currentOccupancy[key] === false,
+    )
+
+    previousStationSideOccupancyRef.current = currentOccupancy
+
+    if (keysToFlash.length === 0) {
+      return
+    }
+
+    setFlashingStationSides((current) => {
+      const next = { ...current }
+      for (const key of keysToFlash) {
+        next[key] = true
+      }
+      return next
+    })
+
+    const timer = window.setTimeout(() => {
+      setFlashingStationSides((current) => {
+        const next = { ...current }
+        for (const key of keysToFlash) {
+          delete next[key]
+        }
+        return next
+      })
+    }, 420)
+
+    return () => window.clearTimeout(timer)
+  }, [map.stations, stationSideOccupancy])
+
+  function getWorldPointer(stage: Konva.Stage): { x: number; y: number } | null {
+    const pointer = stage.getPointerPosition()
+    if (!pointer) {
+      return null
+    }
+
+    return {
+      x: snap((pointer.x - (worldOffsetX + panOffset.x)) / zoom, gridStep),
+      y: snap((pointer.y - (worldOffsetY + panOffset.y)) / zoom, gridStep),
+    }
+  }
+
+  function handleCanvasClick(event: Konva.KonvaEventObject<MouseEvent>): void {
+    if (panDidMoveRef.current) {
+      panDidMoveRef.current = false
+      return
+    }
+
+    const stage = event.target.getStage()
+    if (!stage) {
+      return
+    }
+
+    const point = getWorldPointer(stage)
+    if (!point) {
+      return
+    }
+
+    if (activeTool === 'select') {
+      selectEntity(null)
+      return
+    }
+
+    addEntityAt(point)
+  }
+
+  function handleStageMouseDown(event: Konva.KonvaEventObject<MouseEvent>): void {
+    if (event.evt.button !== 0) {
+      return
+    }
+
+    const stage = event.target.getStage()
+    if (!stage) {
+      return
+    }
+
+    const targetName = event.target.name() ?? ''
+    const clickedPanSurface = event.target === stage || targetName.includes('pan-surface')
+    if (!clickedPanSurface) {
+      return
+    }
+
+    const pointer = stage.getPointerPosition()
+    if (!pointer) {
+      return
+    }
+
+    panStartPointerRef.current = { x: pointer.x, y: pointer.y }
+    panStartOffsetRef.current = { ...panOffset }
+    panDidMoveRef.current = false
+    setIsPanning(true)
+  }
+
+  function handleStageMouseMove(event: Konva.KonvaEventObject<MouseEvent>): void {
+    if (!isPanning) {
+      return
+    }
+
+    const stage = event.target.getStage()
+    const start = panStartPointerRef.current
+    if (!stage || !start) {
+      return
+    }
+
+    const pointer = stage.getPointerPosition()
+    if (!pointer) {
+      return
+    }
+
+    const dx = pointer.x - start.x
+    const dy = pointer.y - start.y
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+      panDidMoveRef.current = true
+    }
+
+    setPanOffset({
+      x: panStartOffsetRef.current.x + dx,
+      y: panStartOffsetRef.current.y + dy,
+    })
+  }
+
+  function handleStageMouseUp(): void {
+    setIsPanning(false)
+    panStartPointerRef.current = null
+  }
+
+  function handleWheel(event: Konva.KonvaEventObject<WheelEvent>): void {
+    event.evt.preventDefault()
+
+    if (event.evt.shiftKey) {
+      const container = containerRef.current
+      if (!container) {
+        return
+      }
+
+      container.scrollTop += event.evt.deltaY
+      return
+    }
+
+    const direction = event.evt.deltaY > 0 ? -1 : 1
+    const scaleBy = 1.08
+    const nextZoom = Math.min(2.5, Math.max(0.1, direction > 0 ? zoom * scaleBy : zoom / scaleBy))
+
+    setZoom(nextZoom)
+  }
+
+  function getEndpointSnapCandidate(
+    sectionId: string,
+    x: number,
+    y: number,
+  ): EndpointSnapCandidate | null {
+    const section = map.sections.find((item) => item.id === sectionId)
+    if (!section) {
+      return null
+    }
+
+    const threshold = 30
+    let best: (EndpointSnapCandidate & { d: number }) | null = null
+
+    for (const station of map.stations) {
+      const leftPoint = getStationConnectionPoint(station, 'Left')
+      const rightPoint = getStationConnectionPoint(station, 'Right')
+      const sides: Array<{ side: 'Left' | 'Right'; x: number; y: number; occupiedBy: number | null }> = [
+        { side: 'Left', x: leftPoint.x, y: leftPoint.y, occupiedBy: stationSideOccupancy[`${station.id}:Left`] ?? null },
+        { side: 'Right', x: rightPoint.x, y: rightPoint.y, occupiedBy: stationSideOccupancy[`${station.id}:Right`] ?? null },
+      ]
+
+      for (const side of sides) {
+        if (side.occupiedBy !== null && side.occupiedBy !== section.sectionNumber) {
+          continue
+        }
+
+        const d = distance({ x, y }, { x: side.x, y: side.y })
+        if (d > threshold) {
+          continue
+        }
+
+        if (!best || d < best.d) {
+          best = {
+            kind: 'station',
+            stationId: station.id,
+            side: side.side,
+            x: side.x,
+            y: side.y,
+            d,
+          }
+        }
+      }
+    }
+
+    for (const candidateSection of map.sections) {
+      if (candidateSection.id === sectionId) {
+        continue
+      }
+
+      const endpoints: Array<{ endpointKey: SectionEndpointKey; x: number; y: number }> = [
+        {
+          endpointKey: 'endpoint1',
+          x: candidateSection.endpoint1.coordinate.x,
+          y: candidateSection.endpoint1.coordinate.y,
+        },
+        {
+          endpointKey: 'endpoint2',
+          x: candidateSection.endpoint2.coordinate.x,
+          y: candidateSection.endpoint2.coordinate.y,
+        },
+      ]
+
+      for (const candidateEndpoint of endpoints) {
+        const d = distance({ x, y }, { x: candidateEndpoint.x, y: candidateEndpoint.y })
+        if (d > threshold) {
+          continue
+        }
+
+        if (!best || d < best.d) {
+          best = {
+            kind: 'section-endpoint',
+            sectionId: candidateSection.id,
+            endpointKey: candidateEndpoint.endpointKey,
+            x: candidateEndpoint.x,
+            y: candidateEndpoint.y,
+            d,
+          }
+        }
+      }
+    }
+
+    for (const intersection of map.intersections) {
+      const points = getIntersectionConnectionPoints(intersection)
+      for (const point of points) {
+        const d = distance({ x, y }, { x: point.x, y: point.y })
+        if (d > threshold) {
+          continue
+        }
+
+        if (!best || d < best.d) {
+          best = {
+            kind: 'section-endpoint',
+            sectionId: intersection.id,
+            endpointKey: 'endpoint1',
+            x: point.x,
+            y: point.y,
+            d,
+          }
+        }
+      }
+    }
+
+    if (!best) {
+      return null
+    }
+
+    const { d: _distance, ...candidate } = best
+    return candidate
+  }
+
+  function findSignalSocketCandidate(
+    x: number,
+    y: number,
+    excludeKey?: string,
+  ): { ref: SignalSocketRef; key: string; x: number; y: number; sectionNumber: number } | null {
+    const threshold = 24
+    let best: { ref: SignalSocketRef; key: string; x: number; y: number; sectionNumber: number; d: number } | null = null
+
+    for (const socket of signalSocketPoints) {
+      if (excludeKey && socket.key === excludeKey) {
+        continue
+      }
+
+      const d = distance({ x, y }, { x: socket.x, y: socket.y })
+      if (d > threshold) {
+        continue
+      }
+
+      if (!best || d < best.d) {
+        best = { ...socket, d }
+      }
+    }
+
+    if (!best) {
+      return null
+    }
+
+    const { d: _distance, ...candidate } = best
+    return candidate
+  }
+
+  function getSignalDisplayPoint(signal: MapDocument['signals'][number]): { x: number; y: number } {
+    if (!signal.socketA || !signal.socketB) {
+      return signal.coordinate
+    }
+
+    const socketA = signalSocketLookup[signalSocketRefKey(signal.socketA)]
+    const socketB = signalSocketLookup[signalSocketRefKey(signal.socketB)]
+    if (!socketA || !socketB) {
+      return signal.coordinate
+    }
+
+    return {
+      x: (socketA.x + socketB.x) / 2,
+      y: (socketA.y + socketB.y) / 2,
+    }
+  }
+
+  function getSignalConnectionStatus(signal: MapDocument['signals'][number]): 'Unconnected' | 'Partial' | 'Connected' {
+    const hasA = !!signal.socketA
+    const hasB = !!signal.socketB
+    if (hasA && hasB) {
+      return 'Connected'
+    }
+
+    if (hasA || hasB) {
+      return 'Partial'
+    }
+
+    return 'Unconnected'
+  }
+
+  function updateSignalSocket(
+    signal: MapDocument['signals'][number],
+    socketKey: 'socketA' | 'socketB',
+    ref: SignalSocketRef | null,
+  ): void {
+    const nextSocketA = socketKey === 'socketA' ? ref : signal.socketA
+    const nextSocketB = socketKey === 'socketB' ? ref : signal.socketB
+    const connectedSectionNumbers = new Set<number>()
+
+    if (nextSocketA) {
+      const resolvedA = signalSocketLookup[signalSocketRefKey(nextSocketA)]
+      if (resolvedA) {
+        connectedSectionNumbers.add(resolvedA.sectionNumber)
+      }
+    }
+
+    if (nextSocketB) {
+      const resolvedB = signalSocketLookup[signalSocketRefKey(nextSocketB)]
+      if (resolvedB) {
+        connectedSectionNumbers.add(resolvedB.sectionNumber)
+      }
+    }
+
+    const displayPoint = nextSocketA && nextSocketB
+      ? (() => {
+          const resolvedA = signalSocketLookup[signalSocketRefKey(nextSocketA)]
+          const resolvedB = signalSocketLookup[signalSocketRefKey(nextSocketB)]
+          if (!resolvedA || !resolvedB) {
+            return signal.coordinate
+          }
+
+          return {
+            x: (resolvedA.x + resolvedB.x) / 2,
+            y: (resolvedA.y + resolvedB.y) / 2,
+          }
+        })()
+      : signal.coordinate
+
+    useEditorStore.getState().updateSignal(signal.id, {
+      socketA: nextSocketA,
+      socketB: nextSocketB,
+      sectionConnections: Array.from(connectedSectionNumbers).slice(0, 3),
+      coordinate: displayPoint,
+    })
+  }
+
+  function updateSectionEndpointCoordinate(
+    endpointKey: 'endpoint1' | 'endpoint2',
+    nextX: number,
+    nextY: number,
+  ): { x: number; y: number } | null {
+    if (!selectedSection) {
+      return null
+    }
+
+    const latestSection = useEditorStore
+      .getState()
+      .map.sections.find((section) => section.id === selectedSection.id)
+
+    if (!latestSection) {
+      return null
+    }
+
+    const appliedPoint = {
+      x: Math.round(nextX),
+      y: Math.round(nextY),
+    }
+
+    const nextEndpoint1 =
+      endpointKey === 'endpoint1'
+        ? { ...latestSection.endpoint1, coordinate: appliedPoint }
+        : latestSection.endpoint1
+    const nextEndpoint2 =
+      endpointKey === 'endpoint2'
+        ? { ...latestSection.endpoint2, coordinate: appliedPoint }
+        : latestSection.endpoint2
+
+    let nextCurveBend = latestSection.curveBend
+    if (latestSection.sectionKind === 'Curved') {
+      const chordLength = distance(nextEndpoint1.coordinate, nextEndpoint2.coordinate)
+      const { min, max } = getCurveBendLimits(chordLength)
+      const sign = latestSection.curveBend >= 0 ? 1 : -1
+      nextCurveBend = sign * clamp(Math.abs(latestSection.curveBend), min, max)
+    }
+
+    updateSection(latestSection.id, {
+      endpoint1: nextEndpoint1,
+      endpoint2: nextEndpoint2,
+      curveBend: nextCurveBend,
+    })
+
+    return appliedPoint
+  }
+
+  function updateSectionCurveControl(nextX: number, nextY: number): { x: number; y: number } | null {
+    if (!selectedSection || selectedSection.sectionKind !== 'Curved') {
+      return null
+    }
+
+    const x1 = selectedSection.endpoint1.coordinate.x
+    const y1 = selectedSection.endpoint1.coordinate.y
+    const x2 = selectedSection.endpoint2.coordinate.x
+    const y2 = selectedSection.endpoint2.coordinate.y
+    const chordX = x2 - x1
+    const chordY = y2 - y1
+    const chordLength = Math.max(1, Math.sqrt(chordX * chordX + chordY * chordY))
+
+    const normalX = -chordY / chordLength
+    const normalY = chordX / chordLength
+    const midpointX = (x1 + x2) / 2
+    const midpointY = (y1 + y2) / 2
+
+    const vectorX = nextX - midpointX
+    const vectorY = nextY - midpointY
+    const projected = vectorX * normalX + vectorY * normalY
+    const sign = projected >= 0 ? 1 : -1
+    const { min, max } = getCurveBendLimits(chordLength)
+    const magnitude = clamp(Math.abs(projected), min, max)
+
+    updateSection(selectedSection.id, {
+      curveBend: sign * magnitude,
+    })
+
+    return {
+      x: midpointX + normalX * sign * magnitude,
+      y: midpointY + normalY * sign * magnitude,
+    }
+  }
+
+  function moveConnectedEndpointCluster(
+    selectedSectionId: string,
+    selectedEndpointKey: SectionEndpointKey,
+    fromPoint: { x: number; y: number },
+    toPoint: { x: number; y: number },
+  ): void {
+    if (!connectionsLocked) {
+      return
+    }
+
+    const state = useEditorStore.getState()
+    const roundedFromX = Math.round(fromPoint.x)
+    const roundedFromY = Math.round(fromPoint.y)
+
+    for (const section of state.map.sections) {
+      const endpoints: SectionEndpointKey[] = ['endpoint1', 'endpoint2']
+      for (const endpointKey of endpoints) {
+        if (section.id === selectedSectionId && endpointKey === selectedEndpointKey) {
+          continue
+        }
+
+        const endpoint = endpointKey === 'endpoint1' ? section.endpoint1 : section.endpoint2
+        if (Math.round(endpoint.coordinate.x) !== roundedFromX || Math.round(endpoint.coordinate.y) !== roundedFromY) {
+          continue
+        }
+
+        if (endpointKey === 'endpoint1') {
+          state.updateSection(section.id, {
+            endpoint1: {
+              ...section.endpoint1,
+              coordinate: { x: toPoint.x, y: toPoint.y },
+            },
+          })
+        } else {
+          state.updateSection(section.id, {
+            endpoint2: {
+              ...section.endpoint2,
+              coordinate: { x: toPoint.x, y: toPoint.y },
+            },
+          })
+        }
+      }
+    }
+  }
+
+  return (
+    <section className="grid-panel">
+      <header className="panel-header inline">
+        <div>
+          <p className="eyebrow">Workspace</p>
+          <h2>{map.settings.title}</h2>
+        </div>
+        <div className="view-controls">
+          <button type="button" className="fit-button" onClick={fitToViewport}>
+            Fit View
+          </button>
+          <label className="zoom-control">
+            <span>Zoom</span>
+            <input
+              type="range"
+              min={0.1}
+              max={2.5}
+              step={0.1}
+              value={zoom}
+              onChange={(event) => setZoom(Number(event.target.value))}
+            />
+          </label>
+        </div>
+      </header>
+      <div className="canvas-wrap" ref={containerRef}>
+        <Stage
+          width={stageWidth}
+          height={stageHeight}
+          onClick={handleCanvasClick}
+          onWheel={handleWheel}
+          onMouseDown={handleStageMouseDown}
+          onMouseMove={handleStageMouseMove}
+          onMouseUp={handleStageMouseUp}
+          onMouseLeave={handleStageMouseUp}
+        >
+          <Layer>
+            <Rect x={0} y={0} width={stageWidth} height={stageHeight} fill="#0e1725" name="pan-surface" />
+            <Group x={worldOffsetX + panOffset.x} y={worldOffsetY + panOffset.y} scaleX={zoom} scaleY={zoom}>
+              <Rect
+                x={0}
+                y={0}
+                width={worldWidth}
+                height={worldHeight}
+                fill="#102038"
+                stroke="#2d4463"
+                strokeWidth={1.2}
+              />
+
+              {fineGridLines.map((line, idx) => (
+                <Line key={`fine-${idx}`} points={line} stroke="#183050" strokeWidth={0.4} />
+              ))}
+
+              {mainGridLines.map((line, idx) => (
+                <Line key={`main-${idx}`} points={line} stroke="#2f5f97" strokeWidth={0.6} />
+              ))}
+
+              <Line points={[0, 0, worldWidth, 0]} stroke="#7dd3fc" strokeWidth={1} />
+              <Line points={[0, 0, 0, worldHeight]} stroke="#7dd3fc" strokeWidth={1} />
+
+              {Array.from({ length: Math.floor(worldWidth / gridStep) + 1 }).map((_, index) => {
+                const labelX = index * gridStep
+                return (
+                  <Text
+                    key={`x-axis-${labelX}`}
+                    x={labelX - 10}
+                    y={-24}
+                    width={40}
+                    text={String(labelX)}
+                    fontSize={10}
+                    fill="#9bd3ff"
+                    align="center"
+                  />
+                )
+              })}
+
+              {Array.from({ length: Math.floor(worldHeight / gridStep) + 1 }).map((_, index) => {
+                const labelY = index * gridStep
+                return (
+                  <Text
+                    key={`y-axis-${labelY}`}
+                    x={-34}
+                    y={labelY - 6}
+                    width={28}
+                    text={String(labelY)}
+                    fontSize={10}
+                    fill="#9bd3ff"
+                    align="right"
+                  />
+                )
+              })}
+
+              {map.sections.map((section) => {
+                const isSelected = selectedEntity?.entityType === 'section' && selectedEntity.id === section.id
+                const isHovered = hoveredSectionId === section.id
+                const isCurved = section.sectionKind === 'Curved'
+                const chordX = section.endpoint2.coordinate.x - section.endpoint1.coordinate.x
+                const chordY = section.endpoint2.coordinate.y - section.endpoint1.coordinate.y
+                const chordLength = Math.max(1, Math.sqrt(chordX * chordX + chordY * chordY))
+                const normalX = -chordY / chordLength
+                const normalY = chordX / chordLength
+                const midpointX = (section.endpoint1.coordinate.x + section.endpoint2.coordinate.x) / 2
+                const midpointY = (section.endpoint1.coordinate.y + section.endpoint2.coordinate.y) / 2
+                const curveControlX = midpointX + normalX * section.curveBend
+                const curveControlY = midpointY + normalY * section.curveBend
+                const labelX = isCurved ? curveControlX + normalX * 18 : midpointX
+                const labelY = isCurved ? curveControlY + normalY * 18 : midpointY
+                const localPoints = isCurved
+                  ? [
+                      section.endpoint1.coordinate.x - midpointX,
+                      section.endpoint1.coordinate.y - midpointY,
+                      normalX * section.curveBend,
+                      normalY * section.curveBend,
+                      section.endpoint2.coordinate.x - midpointX,
+                      section.endpoint2.coordinate.y - midpointY,
+                    ]
+                  : [
+                      section.endpoint1.coordinate.x - midpointX,
+                      section.endpoint1.coordinate.y - midpointY,
+                      section.endpoint2.coordinate.x - midpointX,
+                      section.endpoint2.coordinate.y - midpointY,
+                    ]
+
+                return (
+                  <Group
+                    key={section.id}
+                    x={midpointX}
+                    y={midpointY}
+                    draggable={activeTool === 'select' && !connectionsLocked}
+                    onDragStart={(event) => {
+                      event.cancelBubble = true
+                    }}
+                    onDragEnd={(event) => {
+                      event.cancelBubble = true
+                      moveSection(section.id, event.target.x(), event.target.y())
+                    }}
+                    onClick={(event) => {
+                      event.cancelBubble = true
+                      selectEntity({ entityType: 'section', id: section.id })
+                    }}
+                    onMouseEnter={() => {
+                      setHoveredSectionId(section.id)
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredSectionId((current) => (current === section.id ? null : current))
+                    }}
+                  >
+                    <Line
+                      points={localPoints}
+                      stroke={isSelected ? '#fbbf24' : isHovered ? '#cbe7ff' : section.color}
+                      strokeWidth={isSelected ? 6 : isHovered ? 5 : 4}
+                      hitStrokeWidth={18}
+                      lineCap="round"
+                      tension={isCurved ? 0.5 : 0}
+                    />
+                    <Group x={labelX - midpointX} y={labelY - midpointY} listening={false}>
+                      <Circle radius={10} fill="#000000" stroke="#e2e8f0" strokeWidth={1} />
+                      <Text
+                        x={-10}
+                        y={-7}
+                        width={20}
+                        align="center"
+                        text={String(section.sectionNumber)}
+                        fontSize={8}
+                        fill="#ffffff"
+                      />
+                    </Group>
+                  </Group>
+                )
+              })}
+
+              {map.intersections.map((intersection) => {
+                const isSelected =
+                  selectedEntity?.entityType === 'intersection' && selectedEntity.id === intersection.id
+                const armLength = Math.max(40, intersection.armLength)
+                const points = getIntersectionConnectionPoints(intersection)
+
+                return (
+                  <Group
+                    key={intersection.id}
+                    x={intersection.center.x}
+                    y={intersection.center.y}
+                    draggable={activeTool === 'select'}
+                    onDragStart={(event) => {
+                      event.cancelBubble = true
+                      setDraggedIntersectionId(intersection.id)
+                    }}
+                    onDragMove={(event) => {
+                      event.cancelBubble = true
+                      moveIntersection(intersection.id, event.target.x(), event.target.y())
+                    }}
+                    onDragEnd={(event) => {
+                      event.cancelBubble = true
+                      moveIntersection(intersection.id, event.target.x(), event.target.y())
+                      setDraggedIntersectionId((current) =>
+                        current === intersection.id ? null : current,
+                      )
+                    }}
+                    onClick={(event) => {
+                      event.cancelBubble = true
+                      selectEntity({ entityType: 'intersection', id: intersection.id })
+                    }}
+                  >
+                    <Line points={[-armLength, 0, armLength, 0]} stroke={intersection.color} strokeWidth={7} />
+                    <Line points={[0, -armLength, 0, armLength]} stroke={intersection.color} strokeWidth={7} />
+                    <Circle
+                      radius={11}
+                      fill={intersection.color}
+                      stroke={isSelected ? '#fbbf24' : '#1e293b'}
+                      strokeWidth={isSelected ? 2 : 1.2}
+                    />
+                    <Circle radius={10} fill="#dc2626" stroke="#111827" strokeWidth={1.1} />
+                    <Line points={[-6, 0, 6, 0]} stroke="#000000" strokeWidth={1.2} listening={false} />
+                    <Line points={[0, -6, 0, 6]} stroke="#000000" strokeWidth={1.2} listening={false} />
+                    <Text
+                      x={-9}
+                      y={-6}
+                      width={18}
+                      align="center"
+                      text={String(intersection.intersectionNumber)}
+                      fontSize={8}
+                      fill="#ffffff"
+                    />
+
+                    {points.map((point) => (
+                      <Circle
+                        key={`${intersection.id}-${point.side}`}
+                        x={point.x - intersection.center.x}
+                        y={point.y - intersection.center.y}
+                        radius={4}
+                        fill="#60a5fa"
+                        stroke="#0f172a"
+                        strokeWidth={0.8}
+                        listening={false}
+                      />
+                    ))}
+                  </Group>
+                )
+              })}
+
+              {activeTool === 'select' &&
+                map.sections.map((section) => (
+                  <Group key={`${section.id}-endpoint-anchors`} listening={false}>
+                    <Circle
+                      x={section.endpoint1.coordinate.x}
+                      y={section.endpoint1.coordinate.y}
+                      radius={
+                        highlightedIntersectionEndpointKeys.has(`${section.id}:endpoint1`) ? 7 : 0
+                      }
+                      fill="#fde047"
+                      opacity={0.45}
+                    />
+                    <Circle
+                      x={section.endpoint1.coordinate.x}
+                      y={section.endpoint1.coordinate.y}
+                      radius={4}
+                      fill="#38bdf8"
+                      opacity={0.85}
+                    />
+                    <Circle
+                      x={section.endpoint2.coordinate.x}
+                      y={section.endpoint2.coordinate.y}
+                      radius={
+                        highlightedIntersectionEndpointKeys.has(`${section.id}:endpoint2`) ? 7 : 0
+                      }
+                      fill="#fde047"
+                      opacity={0.45}
+                    />
+                    <Circle
+                      x={section.endpoint2.coordinate.x}
+                      y={section.endpoint2.coordinate.y}
+                      radius={4}
+                      fill="#38bdf8"
+                      opacity={0.85}
+                    />
+                  </Group>
+                ))}
+
+              {junctionIndicators.map((junction) => {
+                const numberText = junction.label.split(' ').at(-1) ?? ''
+                const isJunctionSelected =
+                  selectedEntity?.entityType === 'junction' && selectedEntity.id === junction.key
+
+                return (
+                  <Group
+                    key={`junction-${junction.key}`}
+                    x={junction.x}
+                    y={junction.y}
+                    onClick={(event) => {
+                      event.cancelBubble = true
+                      selectEntity({ entityType: 'junction', id: junction.key })
+                    }}
+                  >
+                    <Circle radius={12} fill="#000000" opacity={0.001} />
+                    {junction.type === 'Merge' && (
+                      <>
+                        <Rect
+                          x={-7}
+                          y={-7}
+                          width={14}
+                          height={14}
+                          fill="#64748b"
+                          stroke="#0f172a"
+                          strokeWidth={isJunctionSelected ? 2 : 1.2}
+                        />
+                        <Text
+                          x={-6}
+                          y={-5}
+                          width={12}
+                          align="center"
+                          text={numberText}
+                          fontSize={7}
+                          fill="#ffffff"
+                        />
+                      </>
+                    )}
+                    {junction.type === 'Split' && (
+                      <Group rotation={toDegrees(junction.mergeDirectionRadians ?? 0)}>
+                        <Line
+                          points={makeTrianglePoints(8)}
+                          closed
+                          fill="#dc2626"
+                          stroke="#0f172a"
+                          strokeWidth={isJunctionSelected ? 2 : 1.2}
+                        />
+                        <Text
+                          x={-6}
+                          y={-5}
+                          width={12}
+                          align="center"
+                          text={numberText}
+                          fontSize={7}
+                          fill="#ffffff"
+                        />
+                      </Group>
+                    )}
+                    {junction.type === 'Junction' && (
+                      <>
+                        <Circle
+                          radius={7}
+                          fill="#111827"
+                          stroke="#e2e8f0"
+                          strokeWidth={isJunctionSelected ? 2 : 1.2}
+                        />
+                        <Text
+                          x={-6}
+                          y={-5}
+                          width={12}
+                          align="center"
+                          text={numberText}
+                          fontSize={7}
+                          fill="#ffffff"
+                        />
+                      </>
+                    )}
+                    {junction.type === 'Undefined' && (
+                      <>
+                        <Line
+                          points={[0, -8, 8, 0, 0, 8, -8, 0]}
+                          closed
+                          fill="#475569"
+                          stroke="#0f172a"
+                          strokeWidth={isJunctionSelected ? 2 : 1.2}
+                        />
+                        <Text
+                          x={-6}
+                          y={-5}
+                          width={12}
+                          align="center"
+                          text={numberText}
+                          fontSize={7}
+                          fill="#ffffff"
+                        />
+                      </>
+                    )}
+                    <Text
+                      x={-46}
+                      y={10}
+                      width={92}
+                      align="center"
+                      text={junction.type}
+                      fontSize={8}
+                      fill="#e2e8f0"
+                    />
+                  </Group>
+                )
+              })}
+
+              {activeTool === 'select' && (
+                <Group listening={false}>
+                  {map.sections.map((section) => {
+                    const endpointKeys: SectionEndpointKey[] = ['endpoint1', 'endpoint2']
+                    return endpointKeys.map((endpointKey) => {
+                      const leftPoint = getSectionSignalSocketPoint(section, endpointKey, 'Left')
+                      const rightPoint = getSectionSignalSocketPoint(section, endpointKey, 'Right')
+                      return (
+                        <Line
+                          key={`socket-bar-${section.id}-${endpointKey}`}
+                          points={[leftPoint.x, leftPoint.y, rightPoint.x, rightPoint.y]}
+                          stroke="#ffffff"
+                          strokeWidth={1.2}
+                          opacity={0.9}
+                        />
+                      )
+                    })
+                  })}
+
+                  {signalSocketPoints.map((socket) => (
+                    <Circle
+                      key={`signal-socket-${socket.key}`}
+                      x={socket.x}
+                      y={socket.y}
+                      radius={4.8}
+                      fill={
+                        socket.signalType === 'Block'
+                          ? '#0ea5e9'
+                          : socket.signalType === 'Path'
+                            ? '#f97316'
+                            : '#64748b'
+                      }
+                      stroke="#0f172a"
+                      strokeWidth={0.9}
+                      opacity={0.9}
+                    />
+                  ))}
+
+                  {signalSocketPoints.map((socket) => (
+                    <Text
+                      key={`signal-socket-type-${socket.key}`}
+                      x={socket.x - 5}
+                      y={socket.y - 4}
+                      width={10}
+                      align="center"
+                      text={socket.signalType === 'Block' ? 'B' : socket.signalType === 'Path' ? 'P' : ''}
+                      fontSize={7}
+                      fill="#ffffff"
+                    />
+                  ))}
+                </Group>
+              )}
+
+              {selectedSection && activeTool === 'select' && (
+                <>
+                  <Group
+                    x={selectedSection.endpoint1.coordinate.x}
+                    y={selectedSection.endpoint1.coordinate.y}
+                    draggable
+                    onDragStart={(event) => {
+                      event.cancelBubble = true
+                      const endpoint = selectedSection.endpoint1
+                      const groupKey = `${Math.round(endpoint.coordinate.x)}:${Math.round(endpoint.coordinate.y)}`
+                      const group = sectionEndpointGroups[groupKey] ?? []
+                      const connectionKind = endpoint.stationConnection
+                        ? 'station'
+                        : group.length > 1
+                          ? 'section'
+                          : 'none'
+
+                      endpointDragStateRef.current.endpoint1 = {
+                        originX: selectedSection.endpoint1.coordinate.x,
+                        originY: selectedSection.endpoint1.coordinate.y,
+                        lastX: selectedSection.endpoint1.coordinate.x,
+                        lastY: selectedSection.endpoint1.coordinate.y,
+                        connectionKind,
+                      }
+
+                      if (!connectionsLocked) {
+                        disconnectSectionEndpointStation(selectedSection.id, 'endpoint1')
+                      }
+                    }}
+                    onDragMove={(event) => {
+                      event.cancelBubble = true
+                      const candidate = getEndpointSnapCandidate(
+                        selectedSection.id,
+                        event.target.x(),
+                        event.target.y(),
+                      )
+                      if (candidate) {
+                        event.target.position({ x: candidate.x, y: candidate.y })
+                        updateSectionEndpointCoordinate('endpoint1', candidate.x, candidate.y)
+                        if (candidate.kind === 'station') {
+                          setSnapPreview({
+                            endpointKey: 'endpoint1',
+                            stationId: candidate.stationId,
+                            side: candidate.side,
+                            x: candidate.x,
+                            y: candidate.y,
+                          })
+                        } else {
+                          setSnapPreview((current) =>
+                            current?.endpointKey === 'endpoint1' ? null : current,
+                          )
+                        }
+                      } else {
+                        const dragState = endpointDragStateRef.current.endpoint1
+                        if (connectionsLocked && dragState?.connectionKind === 'station') {
+                          event.target.position({ x: dragState.originX, y: dragState.originY })
+                          updateSectionEndpointCoordinate('endpoint1', dragState.originX, dragState.originY)
+                        } else {
+                          updateSectionEndpointCoordinate('endpoint1', event.target.x(), event.target.y())
+                          if (connectionsLocked && dragState?.connectionKind === 'section') {
+                            moveConnectedEndpointCluster(
+                              selectedSection.id,
+                              'endpoint1',
+                              { x: dragState.lastX, y: dragState.lastY },
+                              { x: event.target.x(), y: event.target.y() },
+                            )
+                            dragState.lastX = event.target.x()
+                            dragState.lastY = event.target.y()
+                          }
+                        }
+
+                        setSnapPreview((current) => (current?.endpointKey === 'endpoint1' ? null : current))
+                      }
+                    }}
+                    onDragEnd={(event) => {
+                      event.cancelBubble = true
+                      const candidate = getEndpointSnapCandidate(
+                        selectedSection.id,
+                        event.target.x(),
+                        event.target.y(),
+                      )
+                      if (
+                        candidate?.kind === 'station' &&
+                        connectSectionEndpointToStation(selectedSection.id, 'endpoint1', candidate.stationId, candidate.side)
+                      ) {
+                        event.target.position({ x: candidate.x, y: candidate.y })
+                        updateSectionEndpointCoordinate('endpoint1', candidate.x, candidate.y)
+                      } else if (candidate?.kind === 'section-endpoint') {
+                        event.target.position({ x: candidate.x, y: candidate.y })
+                        updateSectionEndpointCoordinate('endpoint1', candidate.x, candidate.y)
+                        const dragState = endpointDragStateRef.current.endpoint1
+                        if (connectionsLocked && dragState?.connectionKind === 'section') {
+                          moveConnectedEndpointCluster(
+                            selectedSection.id,
+                            'endpoint1',
+                            { x: dragState.lastX, y: dragState.lastY },
+                            { x: candidate.x, y: candidate.y },
+                          )
+                          dragState.lastX = candidate.x
+                          dragState.lastY = candidate.y
+                        }
+                      } else {
+                        const dragState = endpointDragStateRef.current.endpoint1
+                        if (connectionsLocked && dragState?.connectionKind === 'station') {
+                          event.target.position({ x: dragState.originX, y: dragState.originY })
+                          updateSectionEndpointCoordinate('endpoint1', dragState.originX, dragState.originY)
+                        } else {
+                          const applied = updateSectionEndpointCoordinate('endpoint1', event.target.x(), event.target.y())
+                          if (applied) {
+                            event.target.position(applied)
+                            if (connectionsLocked && dragState?.connectionKind === 'section') {
+                              moveConnectedEndpointCluster(
+                                selectedSection.id,
+                                'endpoint1',
+                                { x: dragState.lastX, y: dragState.lastY },
+                                applied,
+                              )
+                              dragState.lastX = applied.x
+                              dragState.lastY = applied.y
+                            }
+                          }
+                        }
+                      }
+
+                      setSnapPreview((current) => (current?.endpointKey === 'endpoint1' ? null : current))
+                      delete endpointDragStateRef.current.endpoint1
+                    }}
+                  >
+                    <Circle radius={8} fill="#22d3ee" stroke="#0e7490" strokeWidth={1.5} />
+                    <Text x={-14} y={10} width={28} align="center" text="E1" fontSize={9} fill="#dbeafe" />
+                  </Group>
+
+                  <Group
+                    x={selectedSection.endpoint2.coordinate.x}
+                    y={selectedSection.endpoint2.coordinate.y}
+                    draggable
+                    onDragStart={(event) => {
+                      event.cancelBubble = true
+                      const endpoint = selectedSection.endpoint2
+                      const groupKey = `${Math.round(endpoint.coordinate.x)}:${Math.round(endpoint.coordinate.y)}`
+                      const group = sectionEndpointGroups[groupKey] ?? []
+                      const connectionKind = endpoint.stationConnection
+                        ? 'station'
+                        : group.length > 1
+                          ? 'section'
+                          : 'none'
+
+                      endpointDragStateRef.current.endpoint2 = {
+                        originX: selectedSection.endpoint2.coordinate.x,
+                        originY: selectedSection.endpoint2.coordinate.y,
+                        lastX: selectedSection.endpoint2.coordinate.x,
+                        lastY: selectedSection.endpoint2.coordinate.y,
+                        connectionKind,
+                      }
+
+                      if (!connectionsLocked) {
+                        disconnectSectionEndpointStation(selectedSection.id, 'endpoint2')
+                      }
+                    }}
+                    onDragMove={(event) => {
+                      event.cancelBubble = true
+                      const candidate = getEndpointSnapCandidate(
+                        selectedSection.id,
+                        event.target.x(),
+                        event.target.y(),
+                      )
+                      if (candidate) {
+                        event.target.position({ x: candidate.x, y: candidate.y })
+                        updateSectionEndpointCoordinate('endpoint2', candidate.x, candidate.y)
+                        if (candidate.kind === 'station') {
+                          setSnapPreview({
+                            endpointKey: 'endpoint2',
+                            stationId: candidate.stationId,
+                            side: candidate.side,
+                            x: candidate.x,
+                            y: candidate.y,
+                          })
+                        } else {
+                          setSnapPreview((current) =>
+                            current?.endpointKey === 'endpoint2' ? null : current,
+                          )
+                        }
+                      } else {
+                        const dragState = endpointDragStateRef.current.endpoint2
+                        if (connectionsLocked && dragState?.connectionKind === 'station') {
+                          event.target.position({ x: dragState.originX, y: dragState.originY })
+                          updateSectionEndpointCoordinate('endpoint2', dragState.originX, dragState.originY)
+                        } else {
+                          updateSectionEndpointCoordinate('endpoint2', event.target.x(), event.target.y())
+                          if (connectionsLocked && dragState?.connectionKind === 'section') {
+                            moveConnectedEndpointCluster(
+                              selectedSection.id,
+                              'endpoint2',
+                              { x: dragState.lastX, y: dragState.lastY },
+                              { x: event.target.x(), y: event.target.y() },
+                            )
+                            dragState.lastX = event.target.x()
+                            dragState.lastY = event.target.y()
+                          }
+                        }
+
+                        setSnapPreview((current) => (current?.endpointKey === 'endpoint2' ? null : current))
+                      }
+                    }}
+                    onDragEnd={(event) => {
+                      event.cancelBubble = true
+                      const candidate = getEndpointSnapCandidate(
+                        selectedSection.id,
+                        event.target.x(),
+                        event.target.y(),
+                      )
+                      if (
+                        candidate?.kind === 'station' &&
+                        connectSectionEndpointToStation(selectedSection.id, 'endpoint2', candidate.stationId, candidate.side)
+                      ) {
+                        event.target.position({ x: candidate.x, y: candidate.y })
+                        updateSectionEndpointCoordinate('endpoint2', candidate.x, candidate.y)
+                      } else if (candidate?.kind === 'section-endpoint') {
+                        event.target.position({ x: candidate.x, y: candidate.y })
+                        updateSectionEndpointCoordinate('endpoint2', candidate.x, candidate.y)
+                        const dragState = endpointDragStateRef.current.endpoint2
+                        if (connectionsLocked && dragState?.connectionKind === 'section') {
+                          moveConnectedEndpointCluster(
+                            selectedSection.id,
+                            'endpoint2',
+                            { x: dragState.lastX, y: dragState.lastY },
+                            { x: candidate.x, y: candidate.y },
+                          )
+                          dragState.lastX = candidate.x
+                          dragState.lastY = candidate.y
+                        }
+                      } else {
+                        const dragState = endpointDragStateRef.current.endpoint2
+                        if (connectionsLocked && dragState?.connectionKind === 'station') {
+                          event.target.position({ x: dragState.originX, y: dragState.originY })
+                          updateSectionEndpointCoordinate('endpoint2', dragState.originX, dragState.originY)
+                        } else {
+                          const applied = updateSectionEndpointCoordinate('endpoint2', event.target.x(), event.target.y())
+                          if (applied) {
+                            event.target.position(applied)
+                            if (connectionsLocked && dragState?.connectionKind === 'section') {
+                              moveConnectedEndpointCluster(
+                                selectedSection.id,
+                                'endpoint2',
+                                { x: dragState.lastX, y: dragState.lastY },
+                                applied,
+                              )
+                              dragState.lastX = applied.x
+                              dragState.lastY = applied.y
+                            }
+                          }
+                        }
+                      }
+
+                      setSnapPreview((current) => (current?.endpointKey === 'endpoint2' ? null : current))
+                      delete endpointDragStateRef.current.endpoint2
+                    }}
+                  >
+                    <Circle radius={8} fill="#22d3ee" stroke="#0e7490" strokeWidth={1.5} />
+                    <Text x={-14} y={10} width={28} align="center" text="E2" fontSize={9} fill="#dbeafe" />
+                  </Group>
+
+                  {selectedSection.sectionKind === 'Curved' && (() => {
+                    const x1 = selectedSection.endpoint1.coordinate.x
+                    const y1 = selectedSection.endpoint1.coordinate.y
+                    const x2 = selectedSection.endpoint2.coordinate.x
+                    const y2 = selectedSection.endpoint2.coordinate.y
+                    const chordX = x2 - x1
+                    const chordY = y2 - y1
+                    const chordLength = Math.max(1, Math.sqrt(chordX * chordX + chordY * chordY))
+                    const normalX = -chordY / chordLength
+                    const normalY = chordX / chordLength
+                    const midpointX = (x1 + x2) / 2
+                    const midpointY = (y1 + y2) / 2
+                    const controlX = midpointX + normalX * selectedSection.curveBend
+                    const controlY = midpointY + normalY * selectedSection.curveBend
+
+                    return (
+                      <Group
+                        x={controlX}
+                        y={controlY}
+                        draggable
+                        onDragStart={(event) => {
+                          event.cancelBubble = true
+                        }}
+                        onDragMove={(event) => {
+                          event.cancelBubble = true
+                          updateSectionCurveControl(event.target.x(), event.target.y())
+                        }}
+                        onDragEnd={(event) => {
+                          event.cancelBubble = true
+                          const applied = updateSectionCurveControl(event.target.x(), event.target.y())
+                          if (applied) {
+                            event.target.position(applied)
+                          }
+                        }}
+                      >
+                        <Circle radius={7} fill="#f59e0b" stroke="#92400e" strokeWidth={1.4} />
+                        <Text x={-14} y={10} width={28} align="center" text="C" fontSize={9} fill="#fde68a" />
+                      </Group>
+                    )
+                  })()}
+                </>
+              )}
+
+              {map.stations.map((station) => {
+                const anchorX = (station.inbound.x + station.outbound.x) / 2
+                const anchorY = (station.inbound.y + station.outbound.y) / 2
+                const isSelected = selectedEntity?.entityType === 'station' && selectedEntity.id === station.id
+                const slotCount = station.freightStationSequence.length
+                const slotHeight = 14
+                const slotGap = 4
+                const freightPanelWidth = 64
+                const rightPanelWidth = 108
+                const stationWidth = freightPanelWidth + rightPanelWidth
+                const stationInnerHeight = Math.max(32, slotCount * (slotHeight + slotGap) + 8)
+                const stationHeight = stationInnerHeight + 8
+                const stationLeftX = -stationWidth / 2
+                const stationTopY = -stationHeight / 2
+                const outboundArrow = getStationOutboundArrow(station)
+                const headerText = `${station.stationName} #${station.stationNumber}`
+                const leftPoint = getStationConnectionPoint(station, 'Left')
+                const rightPoint = getStationConnectionPoint(station, 'Right')
+                const leftKey = `${station.id}:Left`
+                const rightKey = `${station.id}:Right`
+                const leftFlashing = flashingStationSides[leftKey] === true
+                const rightFlashing = flashingStationSides[rightKey] === true
+                const leftOccupied = (stationSideOccupancy[leftKey] ?? null) !== null
+                const rightOccupied = (stationSideOccupancy[rightKey] ?? null) !== null
+
+                return (
+                  <Group
+                    key={station.id}
+                    x={anchorX}
+                    y={anchorY}
+                    draggable={activeTool === 'select'}
+                    onDragStart={(event) => {
+                      event.cancelBubble = true
+                    }}
+                    onDragMove={(event) => {
+                      event.cancelBubble = true
+                      moveStation(station.id, event.target.x(), event.target.y())
+                    }}
+                    onDragEnd={(event) => {
+                      event.cancelBubble = true
+                      moveStation(station.id, event.target.x(), event.target.y())
+                    }}
+                    onClick={(event) => {
+                      event.cancelBubble = true
+                      selectEntity({ entityType: 'station', id: station.id })
+                    }}
+                  >
+                    <Rect
+                      x={stationLeftX}
+                      y={stationTopY}
+                      width={stationWidth}
+                      height={stationHeight}
+                      cornerRadius={8}
+                      fill={isSelected ? '#fde68a' : station.color}
+                      stroke="#1e293b"
+                      strokeWidth={1}
+                    />
+
+                    <Rect
+                      x={stationLeftX + 4}
+                      y={stationTopY + 4}
+                      width={freightPanelWidth - 8}
+                      height={stationInnerHeight}
+                      cornerRadius={6}
+                      fill="#e5e7eb"
+                      stroke="#6b7280"
+                      strokeWidth={0.8}
+                    />
+
+                    <Rect
+                      x={stationLeftX + freightPanelWidth}
+                      y={stationTopY + 4}
+                      width={rightPanelWidth - 4}
+                      height={stationInnerHeight}
+                      cornerRadius={6}
+                      fill="#f8fafc"
+                      stroke="#64748b"
+                      strokeWidth={0.8}
+                    />
+
+                    <Text
+                      x={stationLeftX + freightPanelWidth + 6}
+                      y={stationTopY + 9}
+                      width={rightPanelWidth - 16}
+                      height={20}
+                      text={headerText}
+                      fontSize={10}
+                      fill="#0f172a"
+                      align="left"
+                      verticalAlign="top"
+                    />
+
+                    <Text
+                      x={stationLeftX + freightPanelWidth + 6}
+                      y={stationTopY + stationInnerHeight - 15}
+                      width={rightPanelWidth - 16}
+                      height={12}
+                      text={`OUT ${outboundArrow}`}
+                      fontSize={9}
+                      fill="#1d4ed8"
+                      align="left"
+                      verticalAlign="middle"
+                    />
+
+                    {station.freightStationSequence.map((slot, index) => {
+                      const slotX = stationLeftX + 8
+                      const slotY = stationTopY + 8 + index * (slotHeight + slotGap)
+                      const slotWidth = freightPanelWidth - 16
+                      const fill = slot.stationType === 'Liquid' ? '#67e8f9' : '#f5d0fe'
+                      const stroke = slot.stationType === 'Liquid' ? '#155e75' : '#7e22ce'
+                      const modeText = slot.mode === 'Load' ? 'L' : 'U'
+
+                      return (
+                        <Group key={`${station.id}-slot-visual-${index}`} x={slotX} y={slotY} listening={false}>
+                          <Rect
+                            x={0}
+                            y={0}
+                            width={slotWidth}
+                            height={slotHeight}
+                            cornerRadius={4}
+                            fill={fill}
+                            stroke={stroke}
+                            strokeWidth={1}
+                          />
+                          <Text
+                            x={0}
+                            y={2}
+                            width={slotWidth}
+                            text={`${slot.slotIndex} ${slot.stationType.slice(0, 1)} ${modeText}`}
+                            fontSize={8}
+                            fill="#111827"
+                            align="center"
+                            verticalAlign="middle"
+                          />
+                        </Group>
+                      )
+                    })}
+
+                    {activeTool === 'select' && (
+                      <>
+                        <Circle
+                          x={leftPoint.x - anchorX}
+                          y={leftPoint.y - anchorY}
+                          radius={leftFlashing ? 7 : 5}
+                          fill={leftFlashing ? '#f59e0b' : leftOccupied ? '#ef4444' : '#22c55e'}
+                          stroke="#0f172a"
+                          strokeWidth={leftFlashing ? 1.8 : 1}
+                          onMouseEnter={(event) => {
+                            event.cancelBubble = true
+                            setHoveredStationPoint({
+                              stationId: station.id,
+                              side: 'Left',
+                              x: leftPoint.x,
+                              y: leftPoint.y,
+                              occupied: leftOccupied,
+                            })
+                          }}
+                          onMouseLeave={(event) => {
+                            event.cancelBubble = true
+                            setHoveredStationPoint((current) =>
+                              current?.stationId === station.id && current.side === 'Left' ? null : current,
+                            )
+                          }}
+                        />
+                        <Circle
+                          x={rightPoint.x - anchorX}
+                          y={rightPoint.y - anchorY}
+                          radius={rightFlashing ? 7 : 5}
+                          fill={rightFlashing ? '#f59e0b' : rightOccupied ? '#ef4444' : '#22c55e'}
+                          stroke="#0f172a"
+                          strokeWidth={rightFlashing ? 1.8 : 1}
+                          onMouseEnter={(event) => {
+                            event.cancelBubble = true
+                            setHoveredStationPoint({
+                              stationId: station.id,
+                              side: 'Right',
+                              x: rightPoint.x,
+                              y: rightPoint.y,
+                              occupied: rightOccupied,
+                            })
+                          }}
+                          onMouseLeave={(event) => {
+                            event.cancelBubble = true
+                            setHoveredStationPoint((current) =>
+                              current?.stationId === station.id && current.side === 'Right' ? null : current,
+                            )
+                          }}
+                        />
+                      </>
+                    )}
+                  </Group>
+                )
+              })}
+
+              {snapPreview && (
+                <Circle
+                  x={snapPreview.x}
+                  y={snapPreview.y}
+                  radius={9}
+                  stroke="#facc15"
+                  strokeWidth={2}
+                  dash={[5, 4]}
+                  listening={false}
+                />
+              )}
+
+              {hoveredStationPoint && activeTool === 'select' && (
+                <Group x={hoveredStationPoint.x + 10} y={hoveredStationPoint.y - 28} listening={false}>
+                  <Rect width={98} height={22} fill="#0f172a" cornerRadius={5} opacity={0.88} />
+                  <Text
+                    x={6}
+                    y={6}
+                    width={86}
+                    text={`${hoveredStationPoint.side}: ${hoveredStationPoint.occupied ? 'occupied' : 'empty'}`}
+                    fontSize={9}
+                    fill="#e2e8f0"
+                  />
+                </Group>
+              )}
+
+              {selectedSignal && activeTool === 'select' && (() => {
+                const signalCenter = getSignalDisplayPoint(selectedSignal)
+                const socketAResolved = selectedSignal.socketA
+                  ? signalSocketLookup[signalSocketRefKey(selectedSignal.socketA)]
+                  : null
+                const socketBResolved = selectedSignal.socketB
+                  ? signalSocketLookup[signalSocketRefKey(selectedSignal.socketB)]
+                  : null
+
+                const socketAPoint = socketAResolved
+                  ? { x: socketAResolved.x, y: socketAResolved.y }
+                  : { x: signalCenter.x - 14, y: signalCenter.y }
+                const socketBPoint = socketBResolved
+                  ? { x: socketBResolved.x, y: socketBResolved.y }
+                  : { x: signalCenter.x + 14, y: signalCenter.y }
+
+                return (
+                  <>
+                    <Line
+                      points={[signalCenter.x, signalCenter.y, socketAPoint.x, socketAPoint.y]}
+                      stroke="#67e8f9"
+                      strokeWidth={1.2}
+                      dash={[4, 3]}
+                      listening={false}
+                    />
+                    <Line
+                      points={[signalCenter.x, signalCenter.y, socketBPoint.x, socketBPoint.y]}
+                      stroke="#67e8f9"
+                      strokeWidth={1.2}
+                      dash={[4, 3]}
+                      listening={false}
+                    />
+
+                    <Group
+                      x={socketAPoint.x}
+                      y={socketAPoint.y}
+                      draggable
+                      onDragMove={(event) => {
+                        event.cancelBubble = true
+                        const excludeKey = selectedSignal.socketB ? signalSocketRefKey(selectedSignal.socketB) : undefined
+                        const candidate = findSignalSocketCandidate(event.target.x(), event.target.y(), excludeKey)
+                        if (candidate) {
+                          event.target.position({ x: candidate.x, y: candidate.y })
+                        }
+                      }}
+                      onDragEnd={(event) => {
+                        event.cancelBubble = true
+                        const excludeKey = selectedSignal.socketB ? signalSocketRefKey(selectedSignal.socketB) : undefined
+                        const candidate = findSignalSocketCandidate(event.target.x(), event.target.y(), excludeKey)
+                        updateSignalSocket(selectedSignal, 'socketA', candidate ? candidate.ref : null)
+                      }}
+                    >
+                      <Circle radius={6} fill="#0ea5e9" stroke="#082f49" strokeWidth={1.2} />
+                      <Text x={-8} y={8} width={16} align="center" text="A" fontSize={8} fill="#bfdbfe" />
+                    </Group>
+
+                    <Group
+                      x={socketBPoint.x}
+                      y={socketBPoint.y}
+                      draggable
+                      onDragMove={(event) => {
+                        event.cancelBubble = true
+                        const excludeKey = selectedSignal.socketA ? signalSocketRefKey(selectedSignal.socketA) : undefined
+                        const candidate = findSignalSocketCandidate(event.target.x(), event.target.y(), excludeKey)
+                        if (candidate) {
+                          event.target.position({ x: candidate.x, y: candidate.y })
+                        }
+                      }}
+                      onDragEnd={(event) => {
+                        event.cancelBubble = true
+                        const excludeKey = selectedSignal.socketA ? signalSocketRefKey(selectedSignal.socketA) : undefined
+                        const candidate = findSignalSocketCandidate(event.target.x(), event.target.y(), excludeKey)
+                        updateSignalSocket(selectedSignal, 'socketB', candidate ? candidate.ref : null)
+                      }}
+                    >
+                      <Circle radius={6} fill="#22c55e" stroke="#14532d" strokeWidth={1.2} />
+                      <Text x={-8} y={8} width={16} align="center" text="B" fontSize={8} fill="#dcfce7" />
+                    </Group>
+                  </>
+                )
+              })()}
+
+              {map.signals.map((signal) => {
+                const isSelected = selectedEntity?.entityType === 'signal' && selectedEntity.id === signal.id
+                const displayPoint = getSignalDisplayPoint(signal)
+                const status = getSignalConnectionStatus(signal)
+                const statusColor =
+                  status === 'Connected' ? '#22c55e' : status === 'Partial' ? '#f59e0b' : '#64748b'
+
+                return (
+                  <Group
+                    key={signal.id}
+                    x={displayPoint.x}
+                    y={displayPoint.y}
+                    draggable={activeTool === 'select' && status !== 'Connected'}
+                    onDragStart={(event) => {
+                      event.cancelBubble = true
+                    }}
+                    onDragEnd={(event) => {
+                      event.cancelBubble = true
+                      moveSignal(signal.id, event.target.x(), event.target.y())
+                    }}
+                    onClick={(event) => {
+                      event.cancelBubble = true
+                      selectEntity({ entityType: 'signal', id: signal.id })
+                    }}
+                  >
+                    <Circle
+                      radius={9}
+                      fill={signal.color}
+                      stroke={isSelected ? '#fde047' : '#ffffff'}
+                      strokeWidth={isSelected ? 2.5 : 1.2}
+                    />
+                    <Circle radius={4} x={12} y={-10} fill={statusColor} stroke="#0f172a" strokeWidth={1} />
+                    <Text
+                      x={-10}
+                      y={12}
+                      width={20}
+                      align="center"
+                      text={String(signal.signalNumber)}
+                      fontSize={9}
+                      fill="#dbeafe"
+                    />
+                    {isSelected && (
+                      <Text
+                        x={-34}
+                        y={-24}
+                        width={68}
+                        align="center"
+                        text={status}
+                        fontSize={8}
+                        fill="#e2e8f0"
+                      />
+                    )}
+                  </Group>
+                )
+              })}
+            </Group>
+          </Layer>
+        </Stage>
+      </div>
+    </section>
+  )
+}

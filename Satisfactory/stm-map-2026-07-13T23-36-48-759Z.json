@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "lastUpdatedIso": "2026-07-13T23:36:30.087Z",
+  "settings": {
+    "title": "Eric's Railroad",
+    "worldWidth": 1000,
+    "worldHeight": 1000
+  },
+  "stations": [
+    {
+      "id": "station-49ffa15c-bf81-4c52-a2a3-194cdf044f25",
+      "stationName": "Tilburg",
+      "stationNumber": 1,
+      "sectionInNumber": null,
+      "sectionOutNumber": 1,
+      "inbound": {
+        "x": 432.60304181133955,
+        "y": 990.0764804376755
+      },
+      "outbound": {
+        "x": 512.6030418113396,
+        "y": 990.0764804376755
+      },
+      "liquidFreightStationCount": 0,
+      "solidFreightStationCount": 0,
+      "freightStationSequence": [
+        {
+          "slotIndex": 1,
+          "stationType": "Freight",
+          "mode": "Unload",
+          "material": ""
+        },
+        {
+          "slotIndex": 2,
+          "stationType": "Freight",
+          "mode": "Unload",
+          "material": ""
+        },
+        {
+          "slotIndex": 3,
+          "stationType": "Liquid",
+          "mode": "Unload",
+          "material": ""
+        }
+      ],
+      "freightSectionMaterials": [],
+      "notes": ""
+    }
+  ],
+  "sections": [
+    {
+      "id": "section-e790fa72-67bf-4dfb-af9f-824f2fde7405",
+      "sectionNumber": 1,
+      "sectionKind": "Straight",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": 559,
+          "y": 990
+        },
+        "stationConnection": {
+          "stationId": "station-49ffa15c-bf81-4c52-a2a3-194cdf044f25",
+          "side": "Right"
+        },
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": 668,
+          "y": 892
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-9584cdf5-36b6-4a4a-933a-9d4d86ddcbee",
+      "sectionNumber": 2,
+      "sectionKind": "Straight",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 2,
+        "coordinate": {
+          "x": 668,
+          "y": 892
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 2,
+        "coordinate": {
+          "x": 895.8823529411765,
+          "y": 824.1176470588235
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-4bcbdf05-e498-4158-9d4c-bc77496bf33a",
+      "sectionNumber": 3,
+      "sectionKind": "Straight",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 3,
+        "coordinate": {
+          "x": 578,
+          "y": 767
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 3,
+        "coordinate": {
+          "x": 668,
+          "y": 892
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    }
+  ],
+  "signals": []
+}

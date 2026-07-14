@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "lastUpdatedIso": "2026-07-13T22:25:43.835Z",
+  "settings": {
+    "title": "Eric's Railroad",
+    "worldWidth": 1000,
+    "worldHeight": 1000
+  },
+  "stations": [
+    {
+      "id": "station-49ffa15c-bf81-4c52-a2a3-194cdf044f25",
+      "stationName": "Tilburg",
+      "stationNumber": 1,
+      "sectionInNumber": null,
+      "sectionOutNumber": 1,
+      "inbound": {
+        "x": 161.84681133581728,
+        "y": 99.4735729569715
+      },
+      "outbound": {
+        "x": 241.84681133581734,
+        "y": 99.4735729569715
+      },
+      "liquidFreightStationCount": 0,
+      "solidFreightStationCount": 0,
+      "freightStationSequence": [
+        {
+          "slotIndex": 1,
+          "stationType": "Freight",
+          "mode": "Unload",
+          "material": ""
+        },
+        {
+          "slotIndex": 2,
+          "stationType": "Freight",
+          "mode": "Unload",
+          "material": ""
+        },
+        {
+          "slotIndex": 3,
+          "stationType": "Liquid",
+          "mode": "Unload",
+          "material": ""
+        }
+      ],
+      "freightSectionMaterials": [],
+      "notes": ""
+    }
+  ],
+  "sections": [
+    {
+      "id": "section-12f29076-ff22-437a-91fa-98169409599a",
+      "sectionNumber": 1,
+      "sectionKind": "Straight",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": 287.8468113358173,
+          "y": 99.4735729569715
+        },
+        "stationConnection": {
+          "stationId": "station-49ffa15c-bf81-4c52-a2a3-194cdf044f25",
+          "side": "Right"
+        },
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": 587.5357811965814,
+          "y": 172.2138439154942
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    }
+  ],
+  "signals": []
+}
