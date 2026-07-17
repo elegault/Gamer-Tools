@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type JSX, type RefObject } from '
 import { Circle, Group, Layer, Line, Rect, Stage, Text } from 'react-konva'
 import type Konva from 'konva'
 import type { MapDocument } from '../models/mapSchema'
+import { buildConnectionReview, buildJunctionMetadata } from '../models/connectionReview'
 import { useEditorStore } from '../store/editorStore'
 
 type Size = {
@@ -154,39 +155,292 @@ function toDegrees(radians: number): number {
   return (radians * 180) / Math.PI
 }
 
-function makeTrianglePoints(radius: number): number[] {
-  const halfBase = radius * 0.9
-  return [0, -radius, halfBase, radius * 0.9, -halfBase, radius * 0.9]
+function getSectionDirectionDescriptor(section: MapDocument['sections'][number]): {
+  symbol: string
+  color: string
+} {
+  const mode = section.directionMode ?? 'Bidirectional'
+  const endpoint1Allowed = section.endpoint1.entranceMode === 'Allowed'
+  const endpoint2Allowed = section.endpoint2.entranceMode === 'Allowed'
+
+  const modeConsistent =
+    (mode === 'Bidirectional' && endpoint1Allowed && endpoint2Allowed) ||
+    (mode === 'OneWay1To2' && endpoint1Allowed && !endpoint2Allowed) ||
+    (mode === 'OneWay2To1' && !endpoint1Allowed && endpoint2Allowed)
+
+  if (!modeConsistent) {
+    return {
+      symbol: '?',
+      color: '#ef4444',
+    }
+  }
+
+  if (mode === 'OneWay1To2') {
+    return {
+      symbol: '1->2',
+      color: '#f59e0b',
+    }
+  }
+
+  if (mode === 'OneWay2To1') {
+    return {
+      symbol: '2->1',
+      color: '#f59e0b',
+    }
+  }
+
+  return {
+    symbol: '<->',
+    color: '#22c55e',
+  }
 }
 
-function getContentBounds(map: MapDocument): { width: number; height: number } {
+function getSectionDirectionArrowMarkers(section: MapDocument['sections'][number]): Array<{ x: number; y: number; angle: number; color: string }> {
+  const p0 = section.endpoint1.coordinate
+  const p2 = section.endpoint2.coordinate
+  const mode = section.directionMode ?? 'Bidirectional'
+
+  const chordX = p2.x - p0.x
+  const chordY = p2.y - p0.y
+  const chordLength = Math.max(1, Math.sqrt(chordX * chordX + chordY * chordY))
+  const normalX = -chordY / chordLength
+  const normalY = chordX / chordLength
+  const midpoint = {
+    x: (p0.x + p2.x) / 2,
+    y: (p0.y + p2.y) / 2,
+  }
+  const control = {
+    x: midpoint.x + normalX * section.curveBend,
+    y: midpoint.y + normalY * section.curveBend,
+  }
+  const isCurved = section.sectionKind === 'Curved'
+
+  const sample = (t: number): { x: number; y: number; tangentX: number; tangentY: number } => {
+    if (!isCurved) {
+      return {
+        x: p0.x + (p2.x - p0.x) * t,
+        y: p0.y + (p2.y - p0.y) * t,
+        tangentX: p2.x - p0.x,
+        tangentY: p2.y - p0.y,
+      }
+    }
+
+    const oneMinusT = 1 - t
+    return {
+      x: oneMinusT * oneMinusT * p0.x + 2 * oneMinusT * t * control.x + t * t * p2.x,
+      y: oneMinusT * oneMinusT * p0.y + 2 * oneMinusT * t * control.y + t * t * p2.y,
+      tangentX: 2 * oneMinusT * (control.x - p0.x) + 2 * t * (p2.x - control.x),
+      tangentY: 2 * oneMinusT * (control.y - p0.y) + 2 * t * (p2.y - control.y),
+    }
+  }
+
+  const quarterPoints = [0.25, 0.75]
+  const markers: Array<{ x: number; y: number; angle: number; color: string }> = []
+
+  for (const t of quarterPoints) {
+    const sampled = sample(t)
+    const tangentLength = Math.max(1, Math.sqrt(sampled.tangentX * sampled.tangentX + sampled.tangentY * sampled.tangentY))
+    const tangentX = sampled.tangentX / tangentLength
+    const tangentY = sampled.tangentY / tangentLength
+    const tangentNormalX = -tangentY
+    const tangentNormalY = tangentX
+
+    if (mode === 'Bidirectional') {
+      const offset = 4
+      markers.push({
+        x: sampled.x + tangentNormalX * offset,
+        y: sampled.y + tangentNormalY * offset,
+        angle: Math.atan2(tangentY, tangentX),
+        color: '#22c55e',
+      })
+      markers.push({
+        x: sampled.x - tangentNormalX * offset,
+        y: sampled.y - tangentNormalY * offset,
+        angle: Math.atan2(-tangentY, -tangentX),
+        color: '#22c55e',
+      })
+      continue
+    }
+
+    if (mode === 'OneWay1To2') {
+      markers.push({
+        x: sampled.x,
+        y: sampled.y,
+        angle: Math.atan2(tangentY, tangentX),
+        color: '#f59e0b',
+      })
+      continue
+    }
+
+    markers.push({
+      x: sampled.x,
+      y: sampled.y,
+      angle: Math.atan2(-tangentY, -tangentX),
+      color: '#f59e0b',
+    })
+  }
+
+  return markers
+}
+
+type NumericLabelStyle = MapDocument['settings']['labelStyles']['section']
+
+function getLabelContainerDimensions(style: NumericLabelStyle): { width: number; height: number } {
+  if (style.shape === 'Circle' || style.shape === 'Hexagon') {
+    const diameter = Math.max(style.width, style.height, style.radius * 2)
+    return { width: diameter, height: diameter }
+  }
+
+  return {
+    width: Math.max(8, style.width),
+    height: Math.max(8, style.height),
+  }
+}
+
+function getRegularPolygonPoints(sides: number, radius: number, rotationRadians = -Math.PI / 2): number[] {
+  const points: number[] = []
+  for (let index = 0; index < sides; index += 1) {
+    const angle = rotationRadians + (index * 2 * Math.PI) / sides
+    points.push(Math.cos(angle) * radius, Math.sin(angle) * radius)
+  }
+
+  return points
+}
+
+function renderNumericLabel(
+  style: NumericLabelStyle,
+  text: string,
+  isSelected: boolean,
+  rotationDegrees = 0,
+): JSX.Element {
+  const dims = getLabelContainerDimensions(style)
+  const halfWidth = dims.width / 2
+  const halfHeight = dims.height / 2
+  const strokeWidth = style.borderWidth + (isSelected ? 0.8 : 0)
+  const textBoxHeight = style.textSize + 6
+
+  return (
+    <Group rotation={rotationDegrees} listening={false}>
+      {style.shape === 'Circle' && (
+        <Circle
+          radius={Math.max(4, Math.max(dims.width, dims.height) / 2)}
+          fill={style.backgroundColor}
+          stroke={style.borderColor}
+          strokeWidth={strokeWidth}
+        />
+      )}
+
+      {style.shape === 'Rectangle' && (
+        <Rect
+          x={-halfWidth}
+          y={-halfHeight}
+          width={dims.width}
+          height={dims.height}
+          fill={style.backgroundColor}
+          stroke={style.borderColor}
+          strokeWidth={strokeWidth}
+        />
+      )}
+
+      {style.shape === 'Diamond' && (
+        <Line
+          points={[0, -halfHeight, halfWidth, 0, 0, halfHeight, -halfWidth, 0]}
+          closed
+          fill={style.backgroundColor}
+          stroke={style.borderColor}
+          strokeWidth={strokeWidth}
+        />
+      )}
+
+      {style.shape === 'Triangle' && (
+        <Line
+          points={[0, -halfHeight, halfWidth, halfHeight, -halfWidth, halfHeight]}
+          closed
+          fill={style.backgroundColor}
+          stroke={style.borderColor}
+          strokeWidth={strokeWidth}
+        />
+      )}
+
+      {style.shape === 'Hexagon' && (
+        <Line
+          points={getRegularPolygonPoints(6, Math.max(style.radius, Math.max(dims.width, dims.height) / 2))}
+          closed
+          fill={style.backgroundColor}
+          stroke={style.borderColor}
+          strokeWidth={strokeWidth}
+        />
+      )}
+
+      <Text
+        x={-halfWidth}
+        y={-textBoxHeight / 2 + style.textYOffset}
+        width={dims.width}
+        height={textBoxHeight}
+        align="center"
+        verticalAlign="middle"
+        text={text}
+        fontSize={style.textSize}
+        fill={style.textColor}
+      />
+    </Group>
+  )
+}
+
+function getContentBounds(map: MapDocument): {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  width: number
+  height: number
+} {
+  let minX = 0
   let maxX = map.settings.worldWidth
+  let minY = 0
   let maxY = map.settings.worldHeight
 
   for (const station of map.stations) {
+    minX = Math.min(minX, station.inbound.x, station.outbound.x)
+    minY = Math.min(minY, station.inbound.y, station.outbound.y)
     maxX = Math.max(maxX, station.inbound.x, station.outbound.x)
     maxY = Math.max(maxY, station.inbound.y, station.outbound.y)
   }
 
   for (const section of map.sections) {
+    minX = Math.min(minX, section.endpoint1.coordinate.x, section.endpoint2.coordinate.x)
+    minY = Math.min(minY, section.endpoint1.coordinate.y, section.endpoint2.coordinate.y)
     maxX = Math.max(maxX, section.endpoint1.coordinate.x, section.endpoint2.coordinate.x)
     maxY = Math.max(maxY, section.endpoint1.coordinate.y, section.endpoint2.coordinate.y)
   }
 
   for (const intersection of map.intersections) {
     const arm = Math.max(40, intersection.armLength)
+    minX = Math.min(minX, intersection.center.x - arm)
+    minY = Math.min(minY, intersection.center.y - arm)
     maxX = Math.max(maxX, intersection.center.x + arm)
     maxY = Math.max(maxY, intersection.center.y + arm)
   }
 
   for (const signal of map.signals) {
+    minX = Math.min(minX, signal.coordinate.x)
+    minY = Math.min(minY, signal.coordinate.y)
     maxX = Math.max(maxX, signal.coordinate.x)
     maxY = Math.max(maxY, signal.coordinate.y)
   }
 
+  const paddedMinX = minX - 80
+  const paddedMaxX = maxX + 80
+  const paddedMinY = minY - 80
+  const paddedMaxY = maxY + 80
+
   return {
-    width: Math.max(map.settings.worldWidth, maxX + 80),
-    height: Math.max(map.settings.worldHeight, maxY + 80),
+    minX: paddedMinX,
+    maxX: paddedMaxX,
+    minY: paddedMinY,
+    maxY: paddedMaxY,
+    width: paddedMaxX - paddedMinX,
+    height: paddedMaxY - paddedMinY,
   }
 }
 
@@ -206,6 +460,7 @@ export function GridCanvas(): JSX.Element {
   const connectionsLocked = useEditorStore((state) => state.connectionsLocked)
   const disconnectSectionEndpointStation = useEditorStore((state) => state.disconnectSectionEndpointStation)
   const connectSectionEndpointToStation = useEditorStore((state) => state.connectSectionEndpointToStation)
+  const updateMapSettings = useEditorStore((state) => state.updateMapSettings)
 
   const [containerRef, size] = useContainerSize()
   const hasAutoFitRef = useRef(false)
@@ -227,7 +482,10 @@ export function GridCanvas(): JSX.Element {
   const previousStationSideOccupancyRef = useRef<Record<string, boolean>>({})
   const [flashingStationSides, setFlashingStationSides] = useState<Record<string, boolean>>({})
   const [draggedIntersectionId, setDraggedIntersectionId] = useState<string | null>(null)
-  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({
+    x: map.settings.editorState.viewport.panX,
+    y: map.settings.editorState.viewport.panY,
+  })
   const [isPanning, setIsPanning] = useState(false)
   const panStartPointerRef = useRef<{ x: number; y: number } | null>(null)
   const panStartOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -248,41 +506,80 @@ export function GridCanvas(): JSX.Element {
   >({})
 
   const contentBounds = useMemo(() => getContentBounds(map), [map])
+  const connectionReview = useMemo(() => buildConnectionReview(map), [map])
+  const sectionLabelStyle = map.settings.labelStyles.section
+  const intersectionLabelStyle = map.settings.labelStyles.intersection
+  const worldMinX = contentBounds.minX
+  const worldMaxX = contentBounds.maxX
+  const worldMinY = contentBounds.minY
+  const worldMaxY = contentBounds.maxY
   const worldWidth = contentBounds.width
   const worldHeight = contentBounds.height
   const gridStep = 100
   const worldOffsetX = 40
   const worldOffsetY = 40
+  const worldRenderOffsetX = worldOffsetX + panOffset.x - worldMinX * zoom
+  const worldRenderOffsetY = worldOffsetY + panOffset.y - worldMinY * zoom
   const stageWidth = Math.max(size.width, worldWidth * zoom + worldOffsetX * 2)
   const stageHeight = Math.max(size.height, worldHeight * zoom + worldOffsetY * 2)
 
   const fineGridLines = useMemo(() => {
     const lines: Array<[number, number, number, number]> = []
+    const startX = Math.floor(worldMinX / gridStep) * gridStep
+    const endX = Math.ceil(worldMaxX / gridStep) * gridStep
+    const startY = Math.floor(worldMinY / gridStep) * gridStep
+    const endY = Math.ceil(worldMaxY / gridStep) * gridStep
 
-    for (let x = 0; x <= worldWidth; x += gridStep) {
-      lines.push([x, 0, x, worldHeight])
+    for (let x = startX; x <= endX; x += gridStep) {
+      lines.push([x, startY, x, endY])
     }
 
-    for (let y = 0; y <= worldHeight; y += gridStep) {
-      lines.push([0, y, worldWidth, y])
+    for (let y = startY; y <= endY; y += gridStep) {
+      lines.push([startX, y, endX, y])
     }
 
     return lines
-  }, [gridStep, worldHeight, worldWidth])
+  }, [gridStep, worldMaxX, worldMaxY, worldMinX, worldMinY])
 
   const mainGridLines = useMemo(() => {
     const lines: Array<[number, number, number, number]> = []
+    const startX = Math.floor(worldMinX / gridStep) * gridStep
+    const endX = Math.ceil(worldMaxX / gridStep) * gridStep
+    const startY = Math.floor(worldMinY / gridStep) * gridStep
+    const endY = Math.ceil(worldMaxY / gridStep) * gridStep
 
-    for (let x = 0; x <= worldWidth; x += gridStep) {
-      lines.push([x, 0, x, worldHeight])
+    for (let x = startX; x <= endX; x += gridStep) {
+      lines.push([x, startY, x, endY])
     }
 
-    for (let y = 0; y <= worldHeight; y += gridStep) {
-      lines.push([0, y, worldWidth, y])
+    for (let y = startY; y <= endY; y += gridStep) {
+      lines.push([startX, y, endX, y])
     }
 
     return lines
-  }, [gridStep, worldHeight, worldWidth])
+  }, [gridStep, worldMaxX, worldMaxY, worldMinX, worldMinY])
+
+  const xAxisLabels = useMemo(() => {
+    const labels: number[] = []
+    const startX = Math.ceil(worldMinX / gridStep) * gridStep
+    const endX = Math.floor(worldMaxX / gridStep) * gridStep
+    for (let x = startX; x <= endX; x += gridStep) {
+      labels.push(x)
+    }
+
+    return labels
+  }, [gridStep, worldMaxX, worldMinX])
+
+  const yAxisLabels = useMemo(() => {
+    const labels: number[] = []
+    const startY = Math.ceil(worldMinY / gridStep) * gridStep
+    const endY = Math.floor(worldMaxY / gridStep) * gridStep
+    for (let y = startY; y <= endY; y += gridStep) {
+      labels.push(y)
+    }
+
+    return labels
+  }, [gridStep, worldMaxY, worldMinY])
 
   const selectedSection = useMemo(() => {
     if (selectedEntity?.entityType !== 'section') {
@@ -387,30 +684,21 @@ export function GridCanvas(): JSX.Element {
   }, [signalSocketPoints])
 
   const junctionIndicators = useMemo(() => {
+    const junctionMeta = buildJunctionMetadata(map)
     const indicators: Array<{
       key: string
       x: number
       y: number
-      type: 'Merge' | 'Split' | 'Junction' | 'Undefined'
-      label: string
+      type: 'Merge' | 'Split' | 'Junction' | 'Invalid'
+      displayLabel: string
+      displayNumber: number
       mergeDirectionRadians: number | null
     }> = []
 
-    for (const [key, entries] of Object.entries(sectionEndpointGroups)) {
-      if (entries.length < 3) {
-        continue
-      }
-
-      const [xText, yText] = key.split(':')
-      const x = Number(xText)
-      const y = Number(yText)
-      const allowedCount = entries.filter((entry) => entry.entranceMode === 'Allowed').length
-      const blockedCount = entries.length - allowedCount
-
-      let type: 'Merge' | 'Split' | 'Junction' | 'Undefined' = 'Junction'
+    for (const junction of junctionMeta) {
       let mergeDirectionRadians: number | null = null
-      if (blockedCount >= 2 && allowedCount === 1) {
-        type = 'Merge'
+      if (junction.type === 'Merge') {
+        const entries = sectionEndpointGroups[junction.id] ?? []
         const allowedEntry = entries.find((entry) => entry.entranceMode === 'Allowed')
         if (allowedEntry) {
           const allowedSection = map.sections.find((section) => section.id === allowedEntry.sectionId)
@@ -419,31 +707,24 @@ export function GridCanvas(): JSX.Element {
               allowedSection,
               getOtherEndpointKey(allowedEntry.endpointKey),
             )
-            mergeDirectionRadians = Math.atan2(oppositeEndpoint.y - y, oppositeEndpoint.x - x)
+            mergeDirectionRadians = Math.atan2(oppositeEndpoint.y - junction.y, oppositeEndpoint.x - junction.x)
           }
         }
-      } else if (allowedCount >= 2 && blockedCount === 1) {
-        type = 'Split'
       }
 
-      indicators.push({ key, x, y, type, label: '', mergeDirectionRadians })
-    }
-
-    indicators.sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y))
-    const typeCounters: Record<'Merge' | 'Split' | 'Junction' | 'Undefined', number> = {
-      Merge: 0,
-      Split: 0,
-      Junction: 0,
-      Undefined: 0,
-    }
-
-    for (const indicator of indicators) {
-      typeCounters[indicator.type] += 1
-      indicator.label = `${indicator.type} ${typeCounters[indicator.type]}`
+      indicators.push({
+        key: junction.id,
+        x: junction.x,
+        y: junction.y,
+        type: junction.type,
+        displayLabel: junction.displayLabel,
+        displayNumber: junction.displayNumber,
+        mergeDirectionRadians,
+      })
     }
 
     return indicators
-  }, [map.sections, sectionEndpointGroups])
+  }, [map, map.sections, sectionEndpointGroups])
 
   const highlightedIntersectionEndpointKeys = useMemo(() => {
     if (!draggedIntersectionId) {
@@ -510,6 +791,13 @@ export function GridCanvas(): JSX.Element {
   }
 
   useEffect(() => {
+    setPanOffset({
+      x: map.settings.editorState.viewport.panX,
+      y: map.settings.editorState.viewport.panY,
+    })
+  }, [map.settings.editorState.viewport.panX, map.settings.editorState.viewport.panY])
+
+  useEffect(() => {
     if (hasAutoFitRef.current) {
       return
     }
@@ -518,9 +806,39 @@ export function GridCanvas(): JSX.Element {
       return
     }
 
+    const hasSavedViewport =
+      Math.abs(map.settings.editorState.viewport.panX) > 0.1 ||
+      Math.abs(map.settings.editorState.viewport.panY) > 0.1 ||
+      Math.abs(map.settings.editorState.viewport.zoom - 1) > 0.001
+
     hasAutoFitRef.current = true
+    if (hasSavedViewport) {
+      return
+    }
+
     fitToViewport()
-  }, [size.height, size.width, worldHeight, worldWidth])
+  }, [
+    map.settings.editorState.viewport.panX,
+    map.settings.editorState.viewport.panY,
+    map.settings.editorState.viewport.zoom,
+    size.height,
+    size.width,
+    worldHeight,
+    worldWidth,
+  ])
+
+  function persistPanOffset(nextPanOffset: { x: number; y: number }): void {
+    updateMapSettings({
+      editorState: {
+        ...map.settings.editorState,
+        viewport: {
+          ...map.settings.editorState.viewport,
+          panX: nextPanOffset.x,
+          panY: nextPanOffset.y,
+        },
+      },
+    })
+  }
 
   useEffect(() => {
     if (!hoveredSectionId) {
@@ -580,8 +898,8 @@ export function GridCanvas(): JSX.Element {
     }
 
     return {
-      x: snap((pointer.x - (worldOffsetX + panOffset.x)) / zoom, gridStep),
-      y: snap((pointer.y - (worldOffsetY + panOffset.y)) / zoom, gridStep),
+      x: snap((pointer.x - worldRenderOffsetX) / zoom, gridStep),
+      y: snap((pointer.y - worldRenderOffsetY) / zoom, gridStep),
     }
   }
 
@@ -665,6 +983,10 @@ export function GridCanvas(): JSX.Element {
   }
 
   function handleStageMouseUp(): void {
+    if (panDidMoveRef.current) {
+      persistPanOffset(panOffset)
+    }
+
     setIsPanning(false)
     panStartPointerRef.current = null
   }
@@ -845,20 +1167,6 @@ export function GridCanvas(): JSX.Element {
       x: (socketA.x + socketB.x) / 2,
       y: (socketA.y + socketB.y) / 2,
     }
-  }
-
-  function getSignalConnectionStatus(signal: MapDocument['signals'][number]): 'Unconnected' | 'Partial' | 'Connected' {
-    const hasA = !!signal.socketA
-    const hasB = !!signal.socketB
-    if (hasA && hasB) {
-      return 'Connected'
-    }
-
-    if (hasA || hasB) {
-      return 'Partial'
-    }
-
-    return 'Unconnected'
   }
 
   function updateSignalSocket(
@@ -1072,10 +1380,10 @@ export function GridCanvas(): JSX.Element {
         >
           <Layer>
             <Rect x={0} y={0} width={stageWidth} height={stageHeight} fill="#0e1725" name="pan-surface" />
-            <Group x={worldOffsetX + panOffset.x} y={worldOffsetY + panOffset.y} scaleX={zoom} scaleY={zoom}>
+            <Group x={worldRenderOffsetX} y={worldRenderOffsetY} scaleX={zoom} scaleY={zoom}>
               <Rect
-                x={0}
-                y={0}
+                x={worldMinX}
+                y={worldMinY}
                 width={worldWidth}
                 height={worldHeight}
                 fill="#102038"
@@ -1091,16 +1399,15 @@ export function GridCanvas(): JSX.Element {
                 <Line key={`main-${idx}`} points={line} stroke="#2f5f97" strokeWidth={0.6} />
               ))}
 
-              <Line points={[0, 0, worldWidth, 0]} stroke="#7dd3fc" strokeWidth={1} />
-              <Line points={[0, 0, 0, worldHeight]} stroke="#7dd3fc" strokeWidth={1} />
+              <Line points={[worldMinX, 0, worldMaxX, 0]} stroke="#7dd3fc" strokeWidth={1} />
+              <Line points={[0, worldMinY, 0, worldMaxY]} stroke="#7dd3fc" strokeWidth={1} />
 
-              {Array.from({ length: Math.floor(worldWidth / gridStep) + 1 }).map((_, index) => {
-                const labelX = index * gridStep
+              {xAxisLabels.map((labelX) => {
                 return (
                   <Text
                     key={`x-axis-${labelX}`}
                     x={labelX - 10}
-                    y={-24}
+                    y={worldMinY - 24}
                     width={40}
                     text={String(labelX)}
                     fontSize={10}
@@ -1110,18 +1417,47 @@ export function GridCanvas(): JSX.Element {
                 )
               })}
 
-              {Array.from({ length: Math.floor(worldHeight / gridStep) + 1 }).map((_, index) => {
-                const labelY = index * gridStep
+              {xAxisLabels.map((labelX) => {
+                return (
+                  <Text
+                    key={`x-axis-bottom-${labelX}`}
+                    x={labelX - 10}
+                    y={worldMaxY + 12}
+                    width={40}
+                    text={String(labelX)}
+                    fontSize={10}
+                    fill="#9bd3ff"
+                    align="center"
+                  />
+                )
+              })}
+
+              {yAxisLabels.map((labelY) => {
                 return (
                   <Text
                     key={`y-axis-${labelY}`}
-                    x={-34}
+                    x={worldMinX - 34}
                     y={labelY - 6}
                     width={28}
-                    text={String(labelY)}
+                    text={String(-labelY)}
                     fontSize={10}
                     fill="#9bd3ff"
                     align="right"
+                  />
+                )
+              })}
+
+              {yAxisLabels.map((labelY) => {
+                return (
+                  <Text
+                    key={`y-axis-right-${labelY}`}
+                    x={worldMaxX + 6}
+                    y={labelY - 6}
+                    width={30}
+                    text={String(-labelY)}
+                    fontSize={10}
+                    fill="#9bd3ff"
+                    align="left"
                   />
                 )
               })}
@@ -1130,6 +1466,32 @@ export function GridCanvas(): JSX.Element {
                 const isSelected = selectedEntity?.entityType === 'section' && selectedEntity.id === section.id
                 const isHovered = hoveredSectionId === section.id
                 const isCurved = section.sectionKind === 'Curved'
+                const reviewState = connectionReview.sectionConnectivity[section.id]
+                const signalReviewState = connectionReview.sectionSignalConnectivity[section.id]
+                const validationStroke =
+                  reviewState?.status === 'orphan'
+                    ? '#ef4444'
+                    : reviewState?.status === 'partial'
+                      ? '#facc15'
+                      : null
+                const signalBadgeColor =
+                  signalReviewState?.status === 'invalid'
+                    ? '#ef4444'
+                    : signalReviewState?.status === 'partial'
+                      ? '#facc15'
+                      : signalReviewState?.status === 'ok'
+                        ? '#22c55e'
+                        : '#64748b'
+                const signalBadgeText =
+                  signalReviewState?.status === 'invalid'
+                    ? '×'
+                    : signalReviewState?.status === 'partial'
+                      ? '!'
+                      : signalReviewState?.status === 'ok'
+                        ? 'S'
+                        : '?'
+                const directionDescriptor = getSectionDirectionDescriptor(section)
+                const directionArrowMarkers = getSectionDirectionArrowMarkers(section)
                 const chordX = section.endpoint2.coordinate.x - section.endpoint1.coordinate.x
                 const chordY = section.endpoint2.coordinate.y - section.endpoint1.coordinate.y
                 const chordLength = Math.max(1, Math.sqrt(chordX * chordX + chordY * chordY))
@@ -1189,14 +1551,63 @@ export function GridCanvas(): JSX.Element {
                       lineCap="round"
                       tension={isCurved ? 0.5 : 0}
                     />
-                    <Group x={labelX - midpointX} y={labelY - midpointY} listening={false}>
-                      <Circle radius={10} fill="#000000" stroke="#e2e8f0" strokeWidth={1} />
+                    {directionArrowMarkers.map((marker, markerIndex) => (
+                      <Group
+                        key={`${section.id}-direction-arrow-${markerIndex}`}
+                        x={marker.x - midpointX}
+                        y={marker.y - midpointY}
+                        rotation={toDegrees(marker.angle)}
+                        listening={false}
+                      >
+                        <Line points={[-7, 0, 4, 0]} stroke={marker.color} strokeWidth={1.2} />
+                        <Line points={[4, 0, 0, -3]} stroke={marker.color} strokeWidth={1.2} />
+                        <Line points={[4, 0, 0, 3]} stroke={marker.color} strokeWidth={1.2} />
+                      </Group>
+                    ))}
+                    {validationStroke && (
+                      <Line
+                        points={localPoints}
+                        stroke={validationStroke}
+                        strokeWidth={isSelected ? 8 : 6}
+                        lineCap="round"
+                        dash={[10, 7]}
+                        opacity={0.95}
+                        tension={isCurved ? 0.5 : 0}
+                        listening={false}
+                      />
+                    )}
+                    <Group x={labelX - midpointX} y={labelY - midpointY}>
+                      {renderNumericLabel(sectionLabelStyle, String(section.sectionNumber), isSelected)}
+                    </Group>
+                    <Group x={labelX - midpointX + 16} y={labelY - midpointY + 14} listening={false}>
+                      <Rect
+                        x={-20}
+                        y={-8}
+                        width={40}
+                        height={16}
+                        cornerRadius={4}
+                        fill="#0b1624"
+                        stroke={directionDescriptor.color}
+                        strokeWidth={1}
+                      />
                       <Text
-                        x={-10}
-                        y={-7}
-                        width={20}
+                        x={-20}
+                        y={-3}
+                        width={40}
                         align="center"
-                        text={String(section.sectionNumber)}
+                        text={directionDescriptor.symbol}
+                        fontSize={8}
+                        fill={directionDescriptor.color}
+                      />
+                    </Group>
+                    <Group x={labelX - midpointX - 18} y={labelY - midpointY + 14} listening={false}>
+                      <Circle radius={8} fill={signalBadgeColor} stroke="#0f172a" strokeWidth={1} />
+                      <Text
+                        x={-6}
+                        y={-5}
+                        width={12}
+                        align="center"
+                        text={signalBadgeText}
                         fontSize={8}
                         fill="#ffffff"
                       />
@@ -1245,18 +1656,13 @@ export function GridCanvas(): JSX.Element {
                       stroke={isSelected ? '#fbbf24' : '#1e293b'}
                       strokeWidth={isSelected ? 2 : 1.2}
                     />
-                    <Circle radius={10} fill="#dc2626" stroke="#111827" strokeWidth={1.1} />
+                    {renderNumericLabel(
+                      intersectionLabelStyle,
+                      String(intersection.intersectionNumber),
+                      isSelected,
+                    )}
                     <Line points={[-6, 0, 6, 0]} stroke="#000000" strokeWidth={1.2} listening={false} />
                     <Line points={[0, -6, 0, 6]} stroke="#000000" strokeWidth={1.2} listening={false} />
-                    <Text
-                      x={-9}
-                      y={-6}
-                      width={18}
-                      align="center"
-                      text={String(intersection.intersectionNumber)}
-                      fontSize={8}
-                      fill="#ffffff"
-                    />
 
                     {points.map((point) => (
                       <Circle
@@ -1313,9 +1719,13 @@ export function GridCanvas(): JSX.Element {
                 ))}
 
               {junctionIndicators.map((junction) => {
-                const numberText = junction.label.split(' ').at(-1) ?? ''
                 const isJunctionSelected =
                   selectedEntity?.entityType === 'junction' && selectedEntity.id === junction.key
+                const junctionStyle = map.settings.labelStyles.junction[junction.type]
+                const junctionLabelDims = getLabelContainerDimensions(junctionStyle)
+                const hitRadius = Math.max(12, Math.max(junctionLabelDims.width, junctionLabelDims.height) / 2 + 4)
+                const splitRotation =
+                  junction.type === 'Split' ? toDegrees(junction.mergeDirectionRadians ?? 0) : 0
 
                 return (
                   <Group
@@ -1327,94 +1737,19 @@ export function GridCanvas(): JSX.Element {
                       selectEntity({ entityType: 'junction', id: junction.key })
                     }}
                   >
-                    <Circle radius={12} fill="#000000" opacity={0.001} />
-                    {junction.type === 'Merge' && (
-                      <>
-                        <Rect
-                          x={-7}
-                          y={-7}
-                          width={14}
-                          height={14}
-                          fill="#64748b"
-                          stroke="#0f172a"
-                          strokeWidth={isJunctionSelected ? 2 : 1.2}
-                        />
-                        <Text
-                          x={-6}
-                          y={-5}
-                          width={12}
-                          align="center"
-                          text={numberText}
-                          fontSize={7}
-                          fill="#ffffff"
-                        />
-                      </>
-                    )}
-                    {junction.type === 'Split' && (
-                      <Group rotation={toDegrees(junction.mergeDirectionRadians ?? 0)}>
-                        <Line
-                          points={makeTrianglePoints(8)}
-                          closed
-                          fill="#dc2626"
-                          stroke="#0f172a"
-                          strokeWidth={isJunctionSelected ? 2 : 1.2}
-                        />
-                        <Text
-                          x={-6}
-                          y={-5}
-                          width={12}
-                          align="center"
-                          text={numberText}
-                          fontSize={7}
-                          fill="#ffffff"
-                        />
-                      </Group>
-                    )}
-                    {junction.type === 'Junction' && (
-                      <>
-                        <Circle
-                          radius={7}
-                          fill="#111827"
-                          stroke="#e2e8f0"
-                          strokeWidth={isJunctionSelected ? 2 : 1.2}
-                        />
-                        <Text
-                          x={-6}
-                          y={-5}
-                          width={12}
-                          align="center"
-                          text={numberText}
-                          fontSize={7}
-                          fill="#ffffff"
-                        />
-                      </>
-                    )}
-                    {junction.type === 'Undefined' && (
-                      <>
-                        <Line
-                          points={[0, -8, 8, 0, 0, 8, -8, 0]}
-                          closed
-                          fill="#475569"
-                          stroke="#0f172a"
-                          strokeWidth={isJunctionSelected ? 2 : 1.2}
-                        />
-                        <Text
-                          x={-6}
-                          y={-5}
-                          width={12}
-                          align="center"
-                          text={numberText}
-                          fontSize={7}
-                          fill="#ffffff"
-                        />
-                      </>
+                    <Circle radius={hitRadius} fill="#000000" opacity={0.001} />
+                    {renderNumericLabel(
+                      junctionStyle,
+                      String(junction.displayNumber),
+                      isJunctionSelected,
+                      splitRotation,
                     )}
                     <Text
                       x={-46}
                       y={10}
                       width={92}
                       align="center"
-                      text={junction.type}
+                      text={junction.displayLabel}
                       fontSize={8}
                       fill="#e2e8f0"
                     />
@@ -1784,6 +2119,13 @@ export function GridCanvas(): JSX.Element {
                 const anchorX = (station.inbound.x + station.outbound.x) / 2
                 const anchorY = (station.inbound.y + station.outbound.y) / 2
                 const isSelected = selectedEntity?.entityType === 'station' && selectedEntity.id === station.id
+                const stationReview = connectionReview.stationConnectivity[station.id]
+                const stationValidationStroke =
+                  stationReview?.status === 'orphan'
+                    ? '#ef4444'
+                    : stationReview?.status === 'partial'
+                      ? '#facc15'
+                      : '#1e293b'
                 const slotCount = station.freightStationSequence.length
                 const slotHeight = 14
                 const slotGap = 4
@@ -1834,8 +2176,8 @@ export function GridCanvas(): JSX.Element {
                       height={stationHeight}
                       cornerRadius={8}
                       fill={isSelected ? '#fde68a' : station.color}
-                      stroke="#1e293b"
-                      strokeWidth={1}
+                      stroke={stationValidationStroke}
+                      strokeWidth={stationReview?.status === 'ok' ? 1 : 2.2}
                     />
 
                     <Rect
@@ -2085,16 +2427,30 @@ export function GridCanvas(): JSX.Element {
               {map.signals.map((signal) => {
                 const isSelected = selectedEntity?.entityType === 'signal' && selectedEntity.id === signal.id
                 const displayPoint = getSignalDisplayPoint(signal)
-                const status = getSignalConnectionStatus(signal)
+                const statusReview = connectionReview.signalConnectivity[signal.id]
+                const status =
+                  statusReview?.status === 'ok'
+                    ? 'Connected'
+                    : statusReview?.status === 'partial'
+                      ? 'Partial'
+                      : statusReview?.status === 'invalid'
+                        ? 'Invalid'
+                        : 'Unconnected'
                 const statusColor =
-                  status === 'Connected' ? '#22c55e' : status === 'Partial' ? '#f59e0b' : '#64748b'
+                  statusReview?.status === 'ok'
+                    ? '#22c55e'
+                    : statusReview?.status === 'partial'
+                      ? '#f59e0b'
+                      : statusReview?.status === 'invalid'
+                        ? '#ef4444'
+                        : '#64748b'
 
                 return (
                   <Group
                     key={signal.id}
                     x={displayPoint.x}
                     y={displayPoint.y}
-                    draggable={activeTool === 'select' && status !== 'Connected'}
+                    draggable={activeTool === 'select' && statusReview?.status !== 'ok'}
                     onDragStart={(event) => {
                       event.cancelBubble = true
                     }}
@@ -2110,8 +2466,16 @@ export function GridCanvas(): JSX.Element {
                     <Circle
                       radius={9}
                       fill={signal.color}
-                      stroke={isSelected ? '#fde047' : '#ffffff'}
-                      strokeWidth={isSelected ? 2.5 : 1.2}
+                      stroke={
+                        statusReview?.status === 'invalid'
+                          ? '#ef4444'
+                          : statusReview?.status === 'partial'
+                            ? '#f59e0b'
+                            : isSelected
+                              ? '#fde047'
+                              : '#ffffff'
+                      }
+                      strokeWidth={statusReview?.status === 'invalid' ? 2.6 : isSelected ? 2.5 : 1.2}
                     />
                     <Circle radius={4} x={12} y={-10} fill={statusColor} stroke="#0f172a" strokeWidth={1} />
                     <Text
@@ -2131,7 +2495,7 @@ export function GridCanvas(): JSX.Element {
                         align="center"
                         text={status}
                         fontSize={8}
-                        fill="#e2e8f0"
+                        fill={statusColor}
                       />
                     )}
                   </Group>

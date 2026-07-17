@@ -17,6 +17,7 @@ import {
   findSectionPath,
   type SectionConnectivityGraph,
 } from '../models/sectionGraph'
+import { normalizeMapMetadata } from '../models/connectionReview'
 
 const LOCAL_STORAGE_KEY = 'satisfactory-train-mapper-map-v1'
 
@@ -57,6 +58,13 @@ interface EditorState {
   selectEntity: (selectedEntity: SelectedEntity) => void
   updateMapTitle: (title: string) => void
   updateGridSize: (worldWidth: number, worldHeight: number) => void
+  updateMapSettings: (patch: Partial<MapDocument['settings']>) => void
+  updateJunctionNumber: (
+    junctionId: string,
+    numberType: 'junction' | 'merge' | 'split',
+    junctionNumber: number,
+  ) => void
+  runConnectionAutoFix: () => number
   exportMap: () => string
   updateStation: (id: string, patch: Partial<TrainStation>) => void
   updateSection: (id: string, patch: Partial<RailwaySection>) => void
@@ -66,6 +74,7 @@ interface EditorState {
   moveSection: (id: string, x: number, y: number) => void
   moveIntersection: (id: string, x: number, y: number) => void
   moveSignal: (id: string, x: number, y: number) => void
+  relocateSelected: (x: number, y: number) => boolean
   disconnectSectionEndpointStation: (sectionId: string, endpointKey: SectionEndpointKey) => void
   connectSectionEndpointToStation: (
     sectionId: string,
@@ -121,11 +130,63 @@ function loadInitialMap(): MapDocument {
   }
 
   try {
-    return parseMapDocument(JSON.parse(raw))
+    const parsed = parseMapDocument(JSON.parse(raw))
+    normalizeMapMetadata(parsed)
+    reconcileAllStationOccupancy(parsed)
+    return parsed
   } catch {
     return createDefaultMap()
   }
 }
+
+function isSelectedEntityValid(map: MapDocument, selected: SelectedEntity): boolean {
+  if (!selected) {
+    return false
+  }
+
+  if (selected.entityType === 'station') {
+    return map.stations.some((item) => item.id === selected.id)
+  }
+
+  if (selected.entityType === 'section') {
+    return map.sections.some((item) => item.id === selected.id)
+  }
+
+  if (selected.entityType === 'intersection') {
+    return map.intersections.some((item) => item.id === selected.id)
+  }
+
+  if (selected.entityType === 'signal') {
+    return map.signals.some((item) => item.id === selected.id)
+  }
+
+  const groupedEndpointCounts: Record<string, number> = {}
+  for (const section of map.sections) {
+    const keyA = `${Math.round(section.endpoint1.coordinate.x)}:${Math.round(section.endpoint1.coordinate.y)}`
+    const keyB = `${Math.round(section.endpoint2.coordinate.x)}:${Math.round(section.endpoint2.coordinate.y)}`
+    groupedEndpointCounts[keyA] = (groupedEndpointCounts[keyA] ?? 0) + 1
+    groupedEndpointCounts[keyB] = (groupedEndpointCounts[keyB] ?? 0) + 1
+  }
+
+  return (groupedEndpointCounts[selected.id] ?? 0) >= 3
+}
+
+function resolveSelectedEntity(map: MapDocument): SelectedEntity {
+  const candidate = map.settings.editorState.lastSelected
+  if (!candidate) {
+    return null
+  }
+
+  const selected: SelectedEntity = {
+    entityType: candidate.entityType,
+    id: candidate.id,
+  }
+
+  return isSelectedEntityValid(map, selected) ? selected : null
+}
+
+const initialMap = loadInitialMap()
+const initialSelectedEntity = resolveSelectedEntity(initialMap)
 
 function getSectionMidpoint(section: RailwaySection): Point {
   return {
@@ -192,8 +253,10 @@ function createSection(
   return {
     id: randomId('section'),
     sectionNumber,
-    color: '#93c5fd',
+    sectionName: `Section ${sectionNumber}`,
+    color: map.settings.defaultSectionColor,
     sectionKind,
+    directionMode: 'Bidirectional',
     curveBend: 120,
     endpoint1: {
       sectionNumber,
@@ -201,6 +264,10 @@ function createSection(
       stationConnection: null,
       signal1: null,
       signal2: null,
+      signalSockets: {
+        Left: { state: 'Suggested', expectedType: null, overrideType: null },
+        Right: { state: 'Suggested', expectedType: null, overrideType: null },
+      },
       entranceMode: 'Allowed',
     },
     endpoint2: {
@@ -209,6 +276,10 @@ function createSection(
       stationConnection: null,
       signal1: null,
       signal2: null,
+      signalSockets: {
+        Left: { state: 'Suggested', expectedType: null, overrideType: null },
+        Right: { state: 'Suggested', expectedType: null, overrideType: null },
+      },
       entranceMode: 'Allowed',
     },
   }
@@ -334,18 +405,18 @@ function detachEndpointStationConnectionIfNeeded(
 
 export const useEditorStore = create<EditorState>()(
   immer((set, get) => ({
-    map: loadInitialMap(),
-    zoom: 1,
+    map: initialMap,
+    zoom: initialMap.settings.editorState.viewport.zoom,
     activeTool: 'select',
     connectionsLocked: false,
-    selectedEntity: null,
+    selectedEntity: initialSelectedEntity,
 
     clearMap: () => {
       set((state) => {
         state.map = createDefaultMap()
         state.selectedEntity = null
         state.activeTool = 'select'
-        state.zoom = 1
+        state.zoom = state.map.settings.editorState.viewport.zoom
       })
 
       localStorage.removeItem(LOCAL_STORAGE_KEY)
@@ -354,10 +425,20 @@ export const useEditorStore = create<EditorState>()(
     loadFromDisk: (raw) => {
       try {
         const parsed = parseMapDocument(JSON.parse(raw))
+        normalizeMapMetadata(parsed)
         reconcileAllStationOccupancy(parsed)
+        const restoredSelection = resolveSelectedEntity(parsed)
+        parsed.settings.editorState.lastSelected = restoredSelection
+          ? {
+              entityType: restoredSelection.entityType,
+              id: restoredSelection.id,
+            }
+          : null
+
         set((state) => {
           state.map = parsed
-          state.selectedEntity = null
+          state.selectedEntity = restoredSelection
+          state.zoom = parsed.settings.editorState.viewport.zoom
         })
         return { ok: true }
       } catch (error) {
@@ -385,6 +466,8 @@ export const useEditorStore = create<EditorState>()(
       const clampedZoom = Math.min(2.5, Math.max(0.4, zoom))
       set((state) => {
         state.zoom = clampedZoom
+        state.map.settings.editorState.viewport.zoom = clampedZoom
+        state.map = withTimestamp(state.map)
       })
     },
 
@@ -438,6 +521,13 @@ export const useEditorStore = create<EditorState>()(
     selectEntity: (selectedEntity) => {
       set((state) => {
         state.selectedEntity = selectedEntity
+        state.map.settings.editorState.lastSelected = selectedEntity
+          ? {
+              entityType: selectedEntity.entityType,
+              id: selectedEntity.id,
+            }
+          : null
+        state.map = withTimestamp(state.map)
       })
     },
 
@@ -456,9 +546,75 @@ export const useEditorStore = create<EditorState>()(
       })
     },
 
+    updateMapSettings: (patch) => {
+      set((state) => {
+        Object.assign(state.map.settings, patch)
+        state.map = withTimestamp(state.map)
+      })
+    },
+
+    updateJunctionNumber: (junctionId, numberType, junctionNumber) => {
+      set((state) => {
+        const overrides = state.map.settings.junctionNumberOverrides
+        const existing = overrides.find((item) => item.junctionId === junctionId)
+
+        const value = Math.max(0, Math.round(junctionNumber))
+
+        const apply = (target: {
+          junctionNumber?: number
+          mergeNumber?: number
+          splitNumber?: number
+        }): void => {
+          if (numberType === 'junction') {
+            target.junctionNumber = value
+            return
+          }
+
+          if (numberType === 'merge') {
+            target.mergeNumber = value
+            return
+          }
+
+          target.splitNumber = value
+        }
+
+        if (existing) {
+          apply(existing)
+        } else {
+          const next: {
+            junctionId: string
+            junctionNumber?: number
+            mergeNumber?: number
+            splitNumber?: number
+          } = {
+            junctionId,
+          }
+          apply(next)
+          overrides.push(next)
+        }
+
+        state.map = withTimestamp(state.map)
+      })
+    },
+
     exportMap: () => {
       const { map } = get()
       return JSON.stringify(map, null, 2)
+    },
+
+    runConnectionAutoFix: () => {
+      let fixCount = 0
+
+      set((state) => {
+        const { fixes } = normalizeMapMetadata(state.map)
+        fixCount = fixes.length
+
+        if (fixCount > 0) {
+          state.map = withTimestamp(state.map)
+        }
+      })
+
+      return fixCount
     },
 
     updateStation: (id, patch) => {
@@ -480,7 +636,25 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        const previousSectionNumber = section.sectionNumber
+
         Object.assign(section, patch)
+
+        if (patch.sectionNumber !== undefined) {
+          if (!section.sectionName || section.sectionName === `Section ${previousSectionNumber}`) {
+            section.sectionName = `Section ${patch.sectionNumber}`
+          }
+
+          for (const signal of state.map.signals) {
+            const nextConnections = signal.sectionConnections.map((sectionNumber) =>
+              sectionNumber === previousSectionNumber ? patch.sectionNumber as number : sectionNumber,
+            )
+            signal.sectionConnections = Array.from(new Set(nextConnections))
+          }
+
+          section.endpoint1.sectionNumber = patch.sectionNumber
+          section.endpoint2.sectionNumber = patch.sectionNumber
+        }
 
         // If section geometry was edited away from station anchors, detach stale endpoint links.
         detachEndpointStationConnectionIfNeeded(state.map, section, 'endpoint1')
@@ -671,6 +845,273 @@ export const useEditorStore = create<EditorState>()(
       })
     },
 
+    relocateSelected: (x, y) => {
+      let relocated = false
+
+      set((state) => {
+        const selected = state.selectedEntity
+        if (!selected || selected.entityType === 'junction') {
+          return
+        }
+
+        const sectionById = new Map(state.map.sections.map((section) => [section.id, section]))
+        const sectionIdByNumber = new Map(state.map.sections.map((section) => [section.sectionNumber, section.id]))
+
+        const sectionAdjacency = new Map<string, Set<string>>()
+        const sectionGroups = new Map<string, string[]>()
+
+        for (const section of state.map.sections) {
+          const keys = [
+            `${Math.round(section.endpoint1.coordinate.x)}:${Math.round(section.endpoint1.coordinate.y)}`,
+            `${Math.round(section.endpoint2.coordinate.x)}:${Math.round(section.endpoint2.coordinate.y)}`,
+          ]
+
+          for (const key of keys) {
+            const current = sectionGroups.get(key) ?? []
+            current.push(section.id)
+            sectionGroups.set(key, current)
+          }
+        }
+
+        for (const ids of sectionGroups.values()) {
+          for (const id of ids) {
+            if (!sectionAdjacency.has(id)) {
+              sectionAdjacency.set(id, new Set())
+            }
+
+            const neighbors = sectionAdjacency.get(id) as Set<string>
+            for (const candidate of ids) {
+              if (candidate !== id) {
+                neighbors.add(candidate)
+              }
+            }
+          }
+        }
+
+        const movedSectionIds = new Set<string>()
+        const movedStationIds = new Set<string>()
+        const movedIntersectionIds = new Set<string>()
+        const movedSignalIds = new Set<string>()
+
+        const seedSectionIds = new Set<string>()
+
+        if (selected.entityType === 'section') {
+          seedSectionIds.add(selected.id)
+        }
+
+        if (selected.entityType === 'station') {
+          movedStationIds.add(selected.id)
+          for (const section of state.map.sections) {
+            if (
+              section.endpoint1.stationConnection?.stationId === selected.id ||
+              section.endpoint2.stationConnection?.stationId === selected.id
+            ) {
+              seedSectionIds.add(section.id)
+            }
+          }
+        }
+
+        if (selected.entityType === 'signal') {
+          movedSignalIds.add(selected.id)
+          const signal = state.map.signals.find((item) => item.id === selected.id)
+          if (signal?.socketA?.sectionId) {
+            seedSectionIds.add(signal.socketA.sectionId)
+          }
+
+          if (signal?.socketB?.sectionId) {
+            seedSectionIds.add(signal.socketB.sectionId)
+          }
+
+          for (const sectionNumber of signal?.sectionConnections ?? []) {
+            const sectionId = sectionIdByNumber.get(sectionNumber)
+            if (sectionId) {
+              seedSectionIds.add(sectionId)
+            }
+          }
+        }
+
+        if (selected.entityType === 'intersection') {
+          movedIntersectionIds.add(selected.id)
+          const intersection = state.map.intersections.find((item) => item.id === selected.id)
+          if (intersection) {
+            const points = getIntersectionConnectionPoints(intersection)
+            for (const section of state.map.sections) {
+              const endpoints = [section.endpoint1.coordinate, section.endpoint2.coordinate]
+              const connected = endpoints.some((endpoint) =>
+                points.some((point) => pointDistance(endpoint, point) <= INTERSECTION_ENDPOINT_SNAP_TOLERANCE),
+              )
+
+              if (connected) {
+                seedSectionIds.add(section.id)
+              }
+            }
+          }
+        }
+
+        const queue = Array.from(seedSectionIds)
+        while (queue.length > 0) {
+          const currentId = queue.shift() as string
+          if (movedSectionIds.has(currentId)) {
+            continue
+          }
+
+          movedSectionIds.add(currentId)
+          const neighbors = sectionAdjacency.get(currentId)
+          if (!neighbors) {
+            continue
+          }
+
+          for (const neighbor of neighbors) {
+            if (!movedSectionIds.has(neighbor)) {
+              queue.push(neighbor)
+            }
+          }
+        }
+
+        for (const sectionId of movedSectionIds) {
+          const section = sectionById.get(sectionId)
+          if (!section) {
+            continue
+          }
+
+          if (section.endpoint1.stationConnection?.stationId) {
+            movedStationIds.add(section.endpoint1.stationConnection.stationId)
+          }
+
+          if (section.endpoint2.stationConnection?.stationId) {
+            movedStationIds.add(section.endpoint2.stationConnection.stationId)
+          }
+        }
+
+        for (const intersection of state.map.intersections) {
+          const points = getIntersectionConnectionPoints(intersection)
+          const connected = state.map.sections.some((section) => {
+            if (!movedSectionIds.has(section.id)) {
+              return false
+            }
+
+            return [section.endpoint1.coordinate, section.endpoint2.coordinate].some((endpoint) =>
+              points.some((point) => pointDistance(endpoint, point) <= INTERSECTION_ENDPOINT_SNAP_TOLERANCE),
+            )
+          })
+
+          if (connected) {
+            movedIntersectionIds.add(intersection.id)
+          }
+        }
+
+        for (const signal of state.map.signals) {
+          const sectionLinkedBySocket =
+            (signal.socketA?.sectionId && movedSectionIds.has(signal.socketA.sectionId)) ||
+            (signal.socketB?.sectionId && movedSectionIds.has(signal.socketB.sectionId))
+
+          const sectionLinkedByNumber = signal.sectionConnections.some((sectionNumber) => {
+            const sectionId = sectionIdByNumber.get(sectionNumber)
+            return !!sectionId && movedSectionIds.has(sectionId)
+          })
+
+          if (sectionLinkedBySocket || sectionLinkedByNumber) {
+            movedSignalIds.add(signal.id)
+          }
+        }
+
+        if (selected.entityType === 'station') {
+          movedStationIds.add(selected.id)
+        }
+        if (selected.entityType === 'section') {
+          movedSectionIds.add(selected.id)
+        }
+        if (selected.entityType === 'intersection') {
+          movedIntersectionIds.add(selected.id)
+        }
+        if (selected.entityType === 'signal') {
+          movedSignalIds.add(selected.id)
+        }
+
+        let anchor: Point | null = null
+        if (selected.entityType === 'station') {
+          const station = state.map.stations.find((item) => item.id === selected.id)
+          if (station) {
+            anchor = {
+              x: (station.inbound.x + station.outbound.x) / 2,
+              y: (station.inbound.y + station.outbound.y) / 2,
+            }
+          }
+        }
+
+        if (selected.entityType === 'section') {
+          const section = state.map.sections.find((item) => item.id === selected.id)
+          if (section) {
+            anchor = getSectionMidpoint(section)
+          }
+        }
+
+        if (selected.entityType === 'intersection') {
+          const intersection = state.map.intersections.find((item) => item.id === selected.id)
+          if (intersection) {
+            anchor = { ...intersection.center }
+          }
+        }
+
+        if (selected.entityType === 'signal') {
+          const signal = state.map.signals.find((item) => item.id === selected.id)
+          if (signal) {
+            anchor = { ...signal.coordinate }
+          }
+        }
+
+        if (!anchor) {
+          return
+        }
+
+        const dx = x - anchor.x
+        const dy = y - anchor.y
+        if (dx === 0 && dy === 0) {
+          relocated = true
+          return
+        }
+
+        for (const section of state.map.sections) {
+          if (!movedSectionIds.has(section.id)) {
+            continue
+          }
+
+          section.endpoint1.coordinate = shiftPoint(section.endpoint1.coordinate, dx, dy)
+          section.endpoint2.coordinate = shiftPoint(section.endpoint2.coordinate, dx, dy)
+        }
+
+        for (const station of state.map.stations) {
+          if (!movedStationIds.has(station.id)) {
+            continue
+          }
+
+          station.inbound = shiftPoint(station.inbound, dx, dy)
+          station.outbound = shiftPoint(station.outbound, dx, dy)
+        }
+
+        for (const intersection of state.map.intersections) {
+          if (!movedIntersectionIds.has(intersection.id)) {
+            continue
+          }
+
+          intersection.center = shiftPoint(intersection.center, dx, dy)
+        }
+
+        for (const signal of state.map.signals) {
+          if (!movedSignalIds.has(signal.id)) {
+            continue
+          }
+
+          signal.coordinate = shiftPoint(signal.coordinate, dx, dy)
+        }
+
+        state.map = withTimestamp(state.map)
+        relocated = true
+      })
+
+      return relocated
+    },
+
     disconnectSectionEndpointStation: (sectionId, endpointKey) => {
       set((state) => {
         const section = state.map.sections.find((item) => item.id === sectionId)
@@ -838,10 +1279,13 @@ export const useEditorStore = create<EditorState>()(
 
         if (selected.entityType === 'junction') {
           state.selectedEntity = null
+          state.map.settings.editorState.lastSelected = null
+          state.map = withTimestamp(state.map)
           return
         }
 
         state.selectedEntity = null
+        state.map.settings.editorState.lastSelected = null
         state.map = withTimestamp(state.map)
       })
     },

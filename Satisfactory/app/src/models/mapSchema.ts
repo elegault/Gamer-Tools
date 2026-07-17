@@ -3,6 +3,9 @@ import { z } from 'zod'
 export const signalTypeSchema = z.enum(['Block', 'Path'])
 export type SignalType = z.infer<typeof signalTypeSchema>
 
+export const signalSocketStateSchema = z.enum(['Suggested', 'Implemented', 'Removed', 'Overridden'])
+export type SignalSocketState = z.infer<typeof signalSocketStateSchema>
+
 export const freightStationTypeSchema = z.enum(['Freight', 'Liquid'])
 export type FreightStationType = z.infer<typeof freightStationTypeSchema>
 
@@ -11,6 +14,12 @@ export type FreightMode = z.infer<typeof freightModeSchema>
 
 export const railwaySectionKindSchema = z.enum(['Straight', 'Curved'])
 export type RailwaySectionKind = z.infer<typeof railwaySectionKindSchema>
+
+export const sectionDirectionSchema = z.enum(['Bidirectional', 'OneWay1To2', 'OneWay2To1'])
+export type SectionDirection = z.infer<typeof sectionDirectionSchema>
+
+export const labelShapeSchema = z.enum(['Circle', 'Rectangle', 'Diamond', 'Triangle', 'Hexagon'])
+export type LabelShape = z.infer<typeof labelShapeSchema>
 
 const pointSchema = z.object({
   x: z.number(),
@@ -52,6 +61,43 @@ const endpointSchema = z.object({
     .default(null),
   signal1: signalTypeSchema.nullable(),
   signal2: signalTypeSchema.nullable(),
+  signalSockets: z
+    .object({
+      Left: z
+        .object({
+          state: signalSocketStateSchema.default('Suggested'),
+          expectedType: signalTypeSchema.nullable().default(null),
+          overrideType: signalTypeSchema.nullable().default(null),
+        })
+        .default({
+          state: 'Suggested',
+          expectedType: null,
+          overrideType: null,
+        }),
+      Right: z
+        .object({
+          state: signalSocketStateSchema.default('Suggested'),
+          expectedType: signalTypeSchema.nullable().default(null),
+          overrideType: signalTypeSchema.nullable().default(null),
+        })
+        .default({
+          state: 'Suggested',
+          expectedType: null,
+          overrideType: null,
+        }),
+    })
+    .default({
+      Left: {
+        state: 'Suggested',
+        expectedType: null,
+        overrideType: null,
+      },
+      Right: {
+        state: 'Suggested',
+        expectedType: null,
+        overrideType: null,
+      },
+    }),
   entranceMode: z.enum(['Allowed', 'Blocked']),
 })
 
@@ -61,11 +107,241 @@ const signalSocketRefSchema = z.object({
   side: z.enum(['Left', 'Right']),
 })
 
+const labelStyleSchema = z.object({
+  shape: labelShapeSchema.default('Circle'),
+  width: z.number().int().min(8).max(200).default(20),
+  height: z.number().int().min(8).max(200).default(20),
+  radius: z.number().int().min(4).max(120).default(10),
+  backgroundColor: z.string().default('#000000'),
+  borderColor: z.string().default('#e2e8f0'),
+  borderWidth: z.number().min(0).max(10).default(1),
+  textColor: z.string().default('#ffffff'),
+  textSize: z.number().int().min(6).max(72).default(8),
+  textYOffset: z.number().min(-80).max(80).default(0),
+})
+
+const labelStylesSchema = z.object({
+  section: labelStyleSchema.default({
+    shape: 'Circle',
+    width: 20,
+    height: 20,
+    radius: 10,
+    backgroundColor: '#ff0000',
+    borderColor: '#e2e8f0',
+    borderWidth: 1,
+    textColor: '#ffffff',
+    textSize: 18,
+    textYOffset: 0,
+  }),
+  intersection: labelStyleSchema.default({
+    shape: 'Circle',
+    width: 20,
+    height: 20,
+    radius: 10,
+    backgroundColor: '#dc2626',
+    borderColor: '#111827',
+    borderWidth: 1.1,
+    textColor: '#ffffff',
+    textSize: 8,
+    textYOffset: 0,
+  }),
+  junction: z
+    .object({
+      Merge: labelStyleSchema.default({
+        shape: 'Rectangle',
+        width: 14,
+        height: 14,
+        radius: 7,
+        backgroundColor: '#64748b',
+        borderColor: '#0f172a',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      }),
+      Split: labelStyleSchema.default({
+        shape: 'Triangle',
+        width: 16,
+        height: 16,
+        radius: 8,
+        backgroundColor: '#dc2626',
+        borderColor: '#0f172a',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      }),
+      Junction: labelStyleSchema.default({
+        shape: 'Circle',
+        width: 14,
+        height: 14,
+        radius: 7,
+        backgroundColor: '#111827',
+        borderColor: '#e2e8f0',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      }),
+      Invalid: labelStyleSchema.default({
+        shape: 'Diamond',
+        width: 16,
+        height: 16,
+        radius: 8,
+        backgroundColor: '#475569',
+        borderColor: '#ff0000',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      }),
+      Undefined: labelStyleSchema.default({
+        shape: 'Diamond',
+        width: 16,
+        height: 16,
+        radius: 8,
+        backgroundColor: '#475569',
+        borderColor: '#0f172a',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      }),
+    })
+    .default({
+      Merge: {
+        shape: 'Rectangle',
+        width: 14,
+        height: 14,
+        radius: 7,
+        backgroundColor: '#64748b',
+        borderColor: '#0f172a',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      },
+      Split: {
+        shape: 'Triangle',
+        width: 16,
+        height: 16,
+        radius: 8,
+        backgroundColor: '#dc2626',
+        borderColor: '#0f172a',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      },
+      Junction: {
+        shape: 'Circle',
+        width: 14,
+        height: 14,
+        radius: 7,
+        backgroundColor: '#111827',
+        borderColor: '#e2e8f0',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      },
+      Invalid: {
+        shape: 'Diamond',
+        width: 16,
+        height: 16,
+        radius: 8,
+        backgroundColor: '#475569',
+        borderColor: '#ff0000',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      },
+      Undefined: {
+        shape: 'Diamond',
+        width: 16,
+        height: 16,
+        radius: 8,
+        backgroundColor: '#475569',
+        borderColor: '#0f172a',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      },
+    }),
+})
+
+const junctionNumberOverrideSchema = z.object({
+  junctionId: z.string(),
+  junctionNumber: z.number().int().nonnegative().optional(),
+  mergeNumber: z.number().int().nonnegative().optional(),
+  splitNumber: z.number().int().nonnegative().optional(),
+})
+
+const persistedSelectedEntitySchema = z.object({
+  entityType: z.enum(['station', 'section', 'intersection', 'signal', 'junction']),
+  id: z.string(),
+})
+
+const viewportStateSchema = z.object({
+  zoom: z.number().min(0.1).max(2.5).default(1),
+  panX: z.number().default(0),
+  panY: z.number().default(0),
+})
+
+const panelStateSchema = z.object({
+  topbarCollapsed: z.boolean().default(false),
+  sidebarCollapsed: z.boolean().default(false),
+  inspectorCollapsed: z.boolean().default(false),
+  sidebarWidth: z.number().int().min(180).max(720).default(260),
+  inspectorWidth: z.number().int().min(260).max(900).default(600),
+})
+
+const inspectorCollapseStateSchema = z.object({
+  mapUi: z.boolean().default(false),
+  selection: z.boolean().default(false),
+  connectivity: z.boolean().default(false),
+  review: z.boolean().default(false),
+  relocate: z.boolean().default(false),
+  totals: z.boolean().default(false),
+  legend: z.boolean().default(false),
+})
+
+const editorStateSchema = z.object({
+  viewport: viewportStateSchema.default({
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+  }),
+  lastSelected: persistedSelectedEntitySchema.nullable().default(null),
+  panels: panelStateSchema.default({
+    topbarCollapsed: false,
+    sidebarCollapsed: false,
+    inspectorCollapsed: false,
+    sidebarWidth: 260,
+    inspectorWidth: 600,
+  }),
+  inspectorSections: inspectorCollapseStateSchema.default({
+    mapUi: false,
+    selection: false,
+    connectivity: false,
+    review: false,
+    relocate: false,
+    totals: false,
+    legend: false,
+  }),
+})
+
+export type JunctionNumberOverride = z.infer<typeof junctionNumberOverrideSchema>
+
 export const railwaySectionSchema = z.object({
   id: z.string(),
   sectionNumber: z.number().int().nonnegative(),
-  color: z.string().default('#93c5fd'),
+  sectionName: z.string().trim().default(''),
+  color: z.string().default('#da0fec'),
   sectionKind: railwaySectionKindSchema.default('Straight'),
+  directionMode: sectionDirectionSchema.default('Bidirectional'),
   curveBend: z.number().min(-1000).max(1000).default(120),
   endpoint1: endpointSchema,
   endpoint2: endpointSchema,
@@ -94,6 +370,120 @@ export const mapSettingsSchema = z.object({
   title: z.string().trim().default('Untitled Map'),
   worldWidth: z.number().int().positive().default(100),
   worldHeight: z.number().int().positive().default(100),
+  defaultSectionColor: z.string().default('#da0fec'),
+  junctionNumberOverrides: z.array(junctionNumberOverrideSchema).default([]),
+  editorState: editorStateSchema.default({
+    viewport: {
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+    },
+    lastSelected: null,
+    panels: {
+      topbarCollapsed: false,
+      sidebarCollapsed: false,
+      inspectorCollapsed: false,
+      sidebarWidth: 260,
+      inspectorWidth: 600,
+    },
+    inspectorSections: {
+      mapUi: false,
+      selection: false,
+      connectivity: false,
+      review: false,
+      relocate: false,
+      totals: false,
+      legend: false,
+    },
+  }),
+  labelStyles: labelStylesSchema.default({
+    section: {
+      shape: 'Circle',
+      width: 20,
+      height: 20,
+      radius: 10,
+      backgroundColor: '#000000',
+      borderColor: '#e2e8f0',
+      borderWidth: 1,
+      textColor: '#ffffff',
+      textSize: 8,
+      textYOffset: 0,
+    },
+    intersection: {
+      shape: 'Circle',
+      width: 20,
+      height: 20,
+      radius: 10,
+      backgroundColor: '#dc2626',
+      borderColor: '#111827',
+      borderWidth: 1.1,
+      textColor: '#ffffff',
+      textSize: 8,
+      textYOffset: 0,
+    },
+    junction: {
+      Merge: {
+        shape: 'Rectangle',
+        width: 14,
+        height: 14,
+        radius: 7,
+        backgroundColor: '#64748b',
+        borderColor: '#0f172a',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      },
+      Split: {
+        shape: 'Triangle',
+        width: 16,
+        height: 16,
+        radius: 8,
+        backgroundColor: '#dc2626',
+        borderColor: '#0f172a',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      },
+      Invalid: {
+        shape: 'Diamond',
+        width: 16,
+        height: 16,
+        radius: 8,
+        backgroundColor: '#475569',
+        borderColor: '#ff0000',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      },
+      Junction: {
+        shape: 'Circle',
+        width: 14,
+        height: 14,
+        radius: 7,
+        backgroundColor: '#111827',
+        borderColor: '#e2e8f0',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      },
+      Undefined: {
+        shape: 'Diamond',
+        width: 16,
+        height: 16,
+        radius: 8,
+        backgroundColor: '#475569',
+        borderColor: '#0f172a',
+        borderWidth: 1.2,
+        textColor: '#ffffff',
+        textSize: 7,
+        textYOffset: 0,
+      },
+    },
+  }),
 })
 
 export const mapDocumentSchema = z.object({
@@ -119,11 +509,37 @@ export function createDefaultMap(): MapDocument {
   return {
     schemaVersion: 1,
     lastUpdatedIso: new Date().toISOString(),
-    settings: {
+    settings: mapSettingsSchema.parse({
       title: 'Main Rail Network',
       worldWidth: 100,
       worldHeight: 100,
-    },
+      defaultSectionColor: '#da0fec',
+      junctionNumberOverrides: [],
+      editorState: {
+        viewport: {
+          zoom: 1,
+          panX: 0,
+          panY: 0,
+        },
+        lastSelected: null,
+        panels: {
+          topbarCollapsed: false,
+          sidebarCollapsed: false,
+          inspectorCollapsed: false,
+          sidebarWidth: 260,
+          inspectorWidth: 600,
+        },
+        inspectorSections: {
+          mapUi: false,
+          selection: false,
+          connectivity: false,
+          review: false,
+          relocate: false,
+          totals: false,
+          legend: false,
+        },
+      },
+    }),
     stations: [],
     sections: [],
     intersections: [],

@@ -2,11 +2,19 @@ import { useEffect, useMemo, useState, type ChangeEvent, type JSX } from 'react'
 import { useEditorStore } from '../store/editorStore'
 import type {
   Intersection,
+  MapDocument,
   RailwaySection,
+  SectionDirection,
   Signal,
+  SignalSocketState,
+  SignalType,
   StationFreightSlot,
   TrainStation,
 } from '../models/mapSchema'
+import {
+  buildConnectionReview,
+  buildJunctionMetadata,
+} from '../models/connectionReview'
 
 function download(filename: string, data: string): void {
   const blob = new Blob([data], { type: 'application/json' })
@@ -53,18 +61,149 @@ function renderSelectOptions(values: readonly string[]): JSX.Element[] {
   ))
 }
 
+function getSectionDisplayLabel(section: Pick<RailwaySection, 'sectionName' | 'sectionNumber'>): string {
+  const sectionName = section.sectionName.trim() || `Section ${section.sectionNumber}`
+  return sectionName
+}
+
 const freightStationTypes = ['Freight', 'Liquid'] as const
 const freightModes = ['Load', 'Unload'] as const
 const signalTypes = ['Block', 'Path'] as const
-const entranceModes = ['Allowed', 'Blocked'] as const
+const signalSocketStates = ['Suggested', 'Implemented', 'Removed', 'Overridden'] as const
 const sectionKinds = ['Straight', 'Curved'] as const
+
+function getDerivedEntranceMode(
+  directionMode: SectionDirection | undefined,
+  endpointKey: 'endpoint1' | 'endpoint2',
+): 'Allowed' | 'Blocked' {
+  const mode = directionMode ?? 'Bidirectional'
+
+  if (mode === 'Bidirectional') {
+    return 'Allowed'
+  }
+
+  if (mode === 'OneWay1To2') {
+    return endpointKey === 'endpoint1' ? 'Allowed' : 'Blocked'
+  }
+
+  return endpointKey === 'endpoint1' ? 'Blocked' : 'Allowed'
+}
+
+type EndpointSignalSocketState = {
+  state: SignalSocketState
+  expectedType: SignalType | null
+  overrideType: SignalType | null
+}
+
+function getEndpointSignalSocketState(
+  endpoint: RailwaySection['endpoint1'],
+  side: 'Left' | 'Right',
+): EndpointSignalSocketState {
+  const legacySignalType = side === 'Left' ? endpoint.signal1 : endpoint.signal2
+  const socket = endpoint.signalSockets?.[side]
+
+  if (!socket) {
+    return {
+      state: 'Suggested',
+      expectedType: legacySignalType,
+      overrideType: null,
+    }
+  }
+
+  return {
+    state: socket.state,
+    expectedType: socket.expectedType ?? legacySignalType,
+    overrideType: socket.overrideType,
+  }
+}
+
+function getEffectiveSignalType(socket: EndpointSignalSocketState): SignalType | null {
+  if (socket.state === 'Removed') {
+    return null
+  }
+
+  if (socket.state === 'Overridden') {
+    return socket.overrideType
+  }
+
+  return socket.expectedType
+}
+
+function getSectionEndpointConnectionDisplay(
+  map: Pick<MapDocument, 'sections' | 'stations' | 'intersections'>,
+  junctionLabelsByCoordinate: Map<string, string>,
+  section: RailwaySection,
+  endpointKey: 'endpoint1' | 'endpoint2',
+): string {
+  const endpoint = endpointKey === 'endpoint1' ? section.endpoint1 : section.endpoint2
+
+  if (endpoint.stationConnection) {
+    const station = map.stations.find((item) => item.id === endpoint.stationConnection?.stationId)
+    if (station) {
+      return `Train Station (${station.stationName})`
+    }
+  }
+
+  const coordinateKey = `${Math.round(endpoint.coordinate.x)}:${Math.round(endpoint.coordinate.y)}`
+  const connectedEndpoints = map.sections.flatMap((candidate) => {
+    const matches: Array<{ sectionId: string; sectionNumber: number }> = []
+    if (Math.round(candidate.endpoint1.coordinate.x) === Math.round(endpoint.coordinate.x) &&
+      Math.round(candidate.endpoint1.coordinate.y) === Math.round(endpoint.coordinate.y)) {
+      matches.push({ sectionId: candidate.id, sectionNumber: candidate.sectionNumber })
+    }
+
+    if (Math.round(candidate.endpoint2.coordinate.x) === Math.round(endpoint.coordinate.x) &&
+      Math.round(candidate.endpoint2.coordinate.y) === Math.round(endpoint.coordinate.y)) {
+      matches.push({ sectionId: candidate.id, sectionNumber: candidate.sectionNumber })
+    }
+
+    return matches
+  })
+
+  const connectedOtherSections = connectedEndpoints.filter((item) => item.sectionId !== section.id)
+
+  if (connectedOtherSections.length === 1) {
+    const connectedSection = map.sections.find((item) => item.id === connectedOtherSections[0].sectionId)
+    return connectedSection ? getSectionDisplayLabel(connectedSection) : `Section (${connectedOtherSections[0].sectionId})`
+  }
+
+  if (connectedOtherSections.length > 1) {
+    return junctionLabelsByCoordinate.get(coordinateKey) ?? `Junction ${coordinateKey}`
+  }
+
+  for (const intersection of map.intersections) {
+    const arm = Math.max(40, intersection.armLength)
+    const points = [
+      { x: intersection.center.x, y: intersection.center.y - arm },
+      { x: intersection.center.x + arm, y: intersection.center.y },
+      { x: intersection.center.x, y: intersection.center.y + arm },
+      { x: intersection.center.x - arm, y: intersection.center.y },
+    ]
+
+    const connectedToIntersection = points.some((point) => {
+      const dx = point.x - endpoint.coordinate.x
+      const dy = point.y - endpoint.coordinate.y
+      return Math.sqrt(dx * dx + dy * dy) <= 16
+    })
+
+    if (connectedToIntersection) {
+      return `Intersection ${intersection.intersectionNumber}`
+    }
+  }
+
+  return 'Unconnected'
+}
 
 type JunctionMetadata = {
   id: string
   x: number
   y: number
-  type: 'Merge' | 'Split' | 'Junction' | 'Undefined'
-  label: string
+  type: 'Merge' | 'Split' | 'Junction' | 'Invalid'
+  junctionNumber: number
+  mergeNumber: number | null
+  splitNumber: number | null
+  displayNumber: number
+  displayLabel: string
   connectedSectionNumbers: number[]
   allowedCount: number
   blockedCount: number
@@ -78,20 +217,50 @@ function formatSectionNumbers(values: number[]): string {
   return values.join(', ')
 }
 
-function JunctionEditor({ junction }: { junction: JunctionMetadata }): JSX.Element {
+function JunctionEditor({
+  junction,
+  onChangeNumber,
+}: {
+  junction: JunctionMetadata
+  onChangeNumber: (
+    junctionId: string,
+    numberType: 'junction' | 'merge' | 'split',
+    junctionNumber: number,
+  ) => void
+}): JSX.Element {
   return (
     <div className="selection-body">
-      <p>{junction.label}</p>
+      <p>{junction.displayLabel}</p>
 
       <div className="form-grid compact-grid">
         <label>
-          <span>Junction ID</span>
-          <input type="text" value={junction.id} readOnly />
+          <span>Junction Number</span>
+          <input
+            type="number"
+            value={junction.junctionNumber}
+            onChange={(event) => onChangeNumber(junction.id, 'junction', toNumber(event.target.value))}
+          />
         </label>
-        <label>
-          <span>Type</span>
-          <input type="text" value={junction.type} readOnly />
-        </label>
+        {junction.type === 'Merge' && (
+          <label>
+            <span>Merge Number</span>
+            <input
+              type="number"
+              value={junction.mergeNumber ?? 0}
+              onChange={(event) => onChangeNumber(junction.id, 'merge', toNumber(event.target.value))}
+            />
+          </label>
+        )}
+        {junction.type === 'Split' && (
+          <label>
+            <span>Split Number</span>
+            <input
+              type="number"
+              value={junction.splitNumber ?? 0}
+              onChange={(event) => onChangeNumber(junction.id, 'split', toNumber(event.target.value))}
+            />
+          </label>
+        )}
         <label>
           <span>Coordinate X</span>
           <input type="number" value={junction.x} readOnly />
@@ -390,10 +559,16 @@ function StationEditor({
 }
 
 function SectionEditor({
+  map,
+  junctionLabelsByCoordinate,
   section,
+  defaultSectionColor,
   updateSection,
 }: {
+  map: Pick<MapDocument, 'sections' | 'stations' | 'intersections'>
+  junctionLabelsByCoordinate: Map<string, string>
   section: RailwaySection
+  defaultSectionColor: string
   updateSection: (id: string, patch: Partial<RailwaySection>) => void
 }): JSX.Element {
   const dx = section.endpoint2.coordinate.x - section.endpoint1.coordinate.x
@@ -404,6 +579,67 @@ function SectionEditor({
   const directionY = dy / safeLength
   const straightLength = Math.round(chordLength)
   const { min: minCurveBend, max: maxCurveBend } = getCurveBendLimits(chordLength)
+  const endpoint1ConnectedDisplay = getSectionEndpointConnectionDisplay(
+    map,
+    junctionLabelsByCoordinate,
+    section,
+    'endpoint1',
+  )
+  const endpoint2ConnectedDisplay = getSectionEndpointConnectionDisplay(
+    map,
+    junctionLabelsByCoordinate,
+    section,
+    'endpoint2',
+  )
+  const derivedEndpoint1EntranceMode = getDerivedEntranceMode(section.directionMode, 'endpoint1')
+  const derivedEndpoint2EntranceMode = getDerivedEntranceMode(section.directionMode, 'endpoint2')
+  const endpoint1SignalLeft = getEndpointSignalSocketState(section.endpoint1, 'Left')
+  const endpoint1SignalRight = getEndpointSignalSocketState(section.endpoint1, 'Right')
+  const endpoint2SignalLeft = getEndpointSignalSocketState(section.endpoint2, 'Left')
+  const endpoint2SignalRight = getEndpointSignalSocketState(section.endpoint2, 'Right')
+
+  function updateEndpointSignalSocket(
+    endpointKey: 'endpoint1' | 'endpoint2',
+    side: 'Left' | 'Right',
+    next: Partial<EndpointSignalSocketState>,
+  ): void {
+    const endpoint = endpointKey === 'endpoint1' ? section.endpoint1 : section.endpoint2
+    const currentSocket = getEndpointSignalSocketState(endpoint, side)
+    const nextSocket: EndpointSignalSocketState = {
+      state: next.state ?? currentSocket.state,
+      expectedType: next.expectedType === undefined ? currentSocket.expectedType : next.expectedType,
+      overrideType: next.overrideType === undefined ? currentSocket.overrideType : next.overrideType,
+    }
+
+    if (nextSocket.state === 'Removed') {
+      nextSocket.overrideType = null
+    }
+
+    if (nextSocket.state !== 'Overridden') {
+      nextSocket.overrideType = null
+    }
+
+    const effectiveType = getEffectiveSignalType(nextSocket)
+    const nextEndpoint = {
+      ...endpoint,
+      signalSockets: {
+        ...(endpoint.signalSockets ?? {
+          Left: { state: 'Suggested', expectedType: null, overrideType: null },
+          Right: { state: 'Suggested', expectedType: null, overrideType: null },
+        }),
+        [side]: nextSocket,
+      },
+      signal1: side === 'Left' ? effectiveType : endpoint.signal1,
+      signal2: side === 'Right' ? effectiveType : endpoint.signal2,
+    }
+
+    if (endpointKey === 'endpoint1') {
+      updateSection(section.id, { endpoint1: nextEndpoint })
+      return
+    }
+
+    updateSection(section.id, { endpoint2: nextEndpoint })
+  }
 
   function updateStraightLength(nextLengthRaw: number): void {
     const nextLength = clamp(Math.round(nextLengthRaw), 80, 3000)
@@ -428,9 +664,7 @@ function SectionEditor({
 
   return (
     <div className="selection-body">
-      <p>
-        Section #{section.sectionNumber} - {section.sectionKind}
-      </p>
+      <p>{getSectionDisplayLabel(section)}</p>
 
       <div className="form-grid compact-grid">
         <label>
@@ -465,12 +699,74 @@ function SectionEditor({
           </select>
         </label>
         <label>
+          <span>Direction</span>
+          <select
+            value={section.directionMode ?? 'Bidirectional'}
+            onChange={(event) => {
+              const nextDirection = event.target.value as SectionDirection
+              if (nextDirection === 'Bidirectional') {
+                updateSection(section.id, {
+                  directionMode: nextDirection,
+                  endpoint1: {
+                    ...section.endpoint1,
+                    entranceMode: getDerivedEntranceMode(nextDirection, 'endpoint1'),
+                  },
+                  endpoint2: {
+                    ...section.endpoint2,
+                    entranceMode: getDerivedEntranceMode(nextDirection, 'endpoint2'),
+                  },
+                })
+                return
+              }
+
+              if (nextDirection === 'OneWay1To2') {
+                updateSection(section.id, {
+                  directionMode: nextDirection,
+                  endpoint1: {
+                    ...section.endpoint1,
+                    entranceMode: getDerivedEntranceMode(nextDirection, 'endpoint1'),
+                  },
+                  endpoint2: {
+                    ...section.endpoint2,
+                    entranceMode: getDerivedEntranceMode(nextDirection, 'endpoint2'),
+                  },
+                })
+                return
+              }
+
+              updateSection(section.id, {
+                directionMode: nextDirection,
+                endpoint1: {
+                  ...section.endpoint1,
+                  entranceMode: getDerivedEntranceMode(nextDirection, 'endpoint1'),
+                },
+                endpoint2: {
+                  ...section.endpoint2,
+                  entranceMode: getDerivedEntranceMode(nextDirection, 'endpoint2'),
+                },
+              })
+            }}
+          >
+            <option value="Bidirectional">Bidirectional</option>
+            <option value="OneWay1To2">{`${endpoint1ConnectedDisplay} -> ${endpoint2ConnectedDisplay}`}</option>
+            <option value="OneWay2To1">{`${endpoint2ConnectedDisplay} -> ${endpoint1ConnectedDisplay}`}</option>
+          </select>
+        </label>
+        <label>
           <span>Color</span>
-          <input
-            type="color"
-            value={section.color}
-            onChange={(event) => updateSection(section.id, { color: event.target.value })}
-          />
+          <div className="inline-field-actions">
+            <input
+              type="color"
+              value={section.color}
+              onChange={(event) => updateSection(section.id, { color: event.target.value })}
+            />
+            <button
+              type="button"
+              onClick={() => updateSection(section.id, { color: defaultSectionColor })}
+            >
+              Reset Color
+            </button>
+          </div>
         </label>
       </div>
 
@@ -499,6 +795,198 @@ function SectionEditor({
           </div>
         </div>
       )}
+
+      <div className="nested-editor">
+        <h4>Endpoint 1</h4>
+        <div className="form-grid compact-grid">
+          <label>
+            <span>Connected Section</span>
+            <input type="text" value={endpoint1ConnectedDisplay} readOnly />
+          </label>
+          <label>
+            <span>X</span>
+            <input type="number" value={section.endpoint1.coordinate.x} readOnly />
+          </label>
+          <label>
+            <span>Y</span>
+            <input type="number" value={section.endpoint1.coordinate.y} readOnly />
+          </label>
+          <label>
+            <span>Left Signal State</span>
+            <select
+              value={endpoint1SignalLeft.state}
+              onChange={(event) =>
+                updateEndpointSignalSocket('endpoint1', 'Left', {
+                  state: event.target.value as SignalSocketState,
+                })
+              }
+            >
+              {renderSelectOptions(signalSocketStates)}
+            </select>
+          </label>
+          <label>
+            <span>Left Signal Type</span>
+            <select
+              value={
+                endpoint1SignalLeft.state === 'Overridden'
+                  ? endpoint1SignalLeft.overrideType ?? ''
+                  : endpoint1SignalLeft.expectedType ?? ''
+              }
+              disabled={endpoint1SignalLeft.state === 'Removed'}
+              onChange={(event) =>
+                updateEndpointSignalSocket('endpoint1', 'Left',
+                  endpoint1SignalLeft.state === 'Overridden'
+                    ? {
+                      overrideType: event.target.value === '' ? null : (event.target.value as SignalType),
+                    }
+                    : {
+                      expectedType: event.target.value === '' ? null : (event.target.value as SignalType),
+                    })
+              }
+            >
+              <option value="">None</option>
+              {renderSelectOptions(signalTypes)}
+            </select>
+          </label>
+          <label>
+            <span>Right Signal State</span>
+            <select
+              value={endpoint1SignalRight.state}
+              onChange={(event) =>
+                updateEndpointSignalSocket('endpoint1', 'Right', {
+                  state: event.target.value as SignalSocketState,
+                })
+              }
+            >
+              {renderSelectOptions(signalSocketStates)}
+            </select>
+          </label>
+          <label>
+            <span>Right Signal Type</span>
+            <select
+              value={
+                endpoint1SignalRight.state === 'Overridden'
+                  ? endpoint1SignalRight.overrideType ?? ''
+                  : endpoint1SignalRight.expectedType ?? ''
+              }
+              disabled={endpoint1SignalRight.state === 'Removed'}
+              onChange={(event) =>
+                updateEndpointSignalSocket('endpoint1', 'Right',
+                  endpoint1SignalRight.state === 'Overridden'
+                    ? {
+                      overrideType: event.target.value === '' ? null : (event.target.value as SignalType),
+                    }
+                    : {
+                      expectedType: event.target.value === '' ? null : (event.target.value as SignalType),
+                    })
+              }
+            >
+              <option value="">None</option>
+              {renderSelectOptions(signalTypes)}
+            </select>
+          </label>
+          <label>
+            <span>Entrance Mode</span>
+            <input type="text" value={derivedEndpoint1EntranceMode} readOnly />
+          </label>
+        </div>
+      </div>
+
+      <div className="nested-editor">
+        <h4>Endpoint 2</h4>
+        <div className="form-grid compact-grid">
+          <label>
+            <span>Connected Section</span>
+            <input type="text" value={endpoint2ConnectedDisplay} readOnly />
+          </label>
+          <label>
+            <span>X</span>
+            <input type="number" value={section.endpoint2.coordinate.x} readOnly />
+          </label>
+          <label>
+            <span>Y</span>
+            <input type="number" value={section.endpoint2.coordinate.y} readOnly />
+          </label>
+          <label>
+            <span>Left Signal State</span>
+            <select
+              value={endpoint2SignalLeft.state}
+              onChange={(event) =>
+                updateEndpointSignalSocket('endpoint2', 'Left', {
+                  state: event.target.value as SignalSocketState,
+                })
+              }
+            >
+              {renderSelectOptions(signalSocketStates)}
+            </select>
+          </label>
+          <label>
+            <span>Left Signal Type</span>
+            <select
+              value={
+                endpoint2SignalLeft.state === 'Overridden'
+                  ? endpoint2SignalLeft.overrideType ?? ''
+                  : endpoint2SignalLeft.expectedType ?? ''
+              }
+              disabled={endpoint2SignalLeft.state === 'Removed'}
+              onChange={(event) =>
+                updateEndpointSignalSocket('endpoint2', 'Left',
+                  endpoint2SignalLeft.state === 'Overridden'
+                    ? {
+                      overrideType: event.target.value === '' ? null : (event.target.value as SignalType),
+                    }
+                    : {
+                      expectedType: event.target.value === '' ? null : (event.target.value as SignalType),
+                    })
+              }
+            >
+              <option value="">None</option>
+              {renderSelectOptions(signalTypes)}
+            </select>
+          </label>
+          <label>
+            <span>Right Signal State</span>
+            <select
+              value={endpoint2SignalRight.state}
+              onChange={(event) =>
+                updateEndpointSignalSocket('endpoint2', 'Right', {
+                  state: event.target.value as SignalSocketState,
+                })
+              }
+            >
+              {renderSelectOptions(signalSocketStates)}
+            </select>
+          </label>
+          <label>
+            <span>Right Signal Type</span>
+            <select
+              value={
+                endpoint2SignalRight.state === 'Overridden'
+                  ? endpoint2SignalRight.overrideType ?? ''
+                  : endpoint2SignalRight.expectedType ?? ''
+              }
+              disabled={endpoint2SignalRight.state === 'Removed'}
+              onChange={(event) =>
+                updateEndpointSignalSocket('endpoint2', 'Right',
+                  endpoint2SignalRight.state === 'Overridden'
+                    ? {
+                      overrideType: event.target.value === '' ? null : (event.target.value as SignalType),
+                    }
+                    : {
+                      expectedType: event.target.value === '' ? null : (event.target.value as SignalType),
+                    })
+              }
+            >
+              <option value="">None</option>
+              {renderSelectOptions(signalTypes)}
+            </select>
+          </label>
+          <label>
+            <span>Entrance Mode</span>
+            <input type="text" value={derivedEndpoint2EntranceMode} readOnly />
+          </label>
+        </div>
+      </div>
 
       {section.sectionKind === 'Curved' && (
         <div className="nested-editor">
@@ -530,208 +1018,6 @@ function SectionEditor({
           </div>
         </div>
       )}
-
-      <div className="nested-editor">
-        <h4>Endpoint 1</h4>
-        <div className="form-grid compact-grid">
-          <label>
-            <span>Connected Section</span>
-            <input
-              type="number"
-              value={section.endpoint1.sectionNumber}
-              onChange={(event) =>
-                updateSection(section.id, {
-                  endpoint1: {
-                    ...section.endpoint1,
-                    sectionNumber: toNumber(event.target.value),
-                  },
-                })
-              }
-            />
-          </label>
-          <label>
-            <span>X</span>
-            <input
-              type="number"
-              value={section.endpoint1.coordinate.x}
-              onChange={(event) =>
-                updateSection(section.id, {
-                  endpoint1: {
-                    ...section.endpoint1,
-                    coordinate: { ...section.endpoint1.coordinate, x: toNumber(event.target.value) },
-                  },
-                })
-              }
-            />
-          </label>
-          <label>
-            <span>Y</span>
-            <input
-              type="number"
-              value={section.endpoint1.coordinate.y}
-              onChange={(event) =>
-                updateSection(section.id, {
-                  endpoint1: {
-                    ...section.endpoint1,
-                    coordinate: { ...section.endpoint1.coordinate, y: toNumber(event.target.value) },
-                  },
-                })
-              }
-            />
-          </label>
-          <label>
-            <span>Signal 1</span>
-            <select
-              value={section.endpoint1.signal1 ?? ''}
-              onChange={(event) =>
-                updateSection(section.id, {
-                  endpoint1: {
-                    ...section.endpoint1,
-                    signal1: event.target.value === '' ? null : (event.target.value as 'Block' | 'Path'),
-                  },
-                })
-              }
-            >
-              <option value="">None</option>
-              {renderSelectOptions(signalTypes)}
-            </select>
-          </label>
-          <label>
-            <span>Signal 2</span>
-            <select
-              value={section.endpoint1.signal2 ?? ''}
-              onChange={(event) =>
-                updateSection(section.id, {
-                  endpoint1: {
-                    ...section.endpoint1,
-                    signal2: event.target.value === '' ? null : (event.target.value as 'Block' | 'Path'),
-                  },
-                })
-              }
-            >
-              <option value="">None</option>
-              {renderSelectOptions(signalTypes)}
-            </select>
-          </label>
-          <label>
-            <span>Entrance Mode</span>
-            <select
-              value={section.endpoint1.entranceMode}
-              onChange={(event) =>
-                updateSection(section.id, {
-                  endpoint1: {
-                    ...section.endpoint1,
-                    entranceMode: event.target.value as 'Allowed' | 'Blocked',
-                  },
-                })
-              }
-            >
-              {renderSelectOptions(entranceModes)}
-            </select>
-          </label>
-        </div>
-      </div>
-
-      <div className="nested-editor">
-        <h4>Endpoint 2</h4>
-        <div className="form-grid compact-grid">
-          <label>
-            <span>Connected Section</span>
-            <input
-              type="number"
-              value={section.endpoint2.sectionNumber}
-              onChange={(event) =>
-                updateSection(section.id, {
-                  endpoint2: {
-                    ...section.endpoint2,
-                    sectionNumber: toNumber(event.target.value),
-                  },
-                })
-              }
-            />
-          </label>
-          <label>
-            <span>X</span>
-            <input
-              type="number"
-              value={section.endpoint2.coordinate.x}
-              onChange={(event) =>
-                updateSection(section.id, {
-                  endpoint2: {
-                    ...section.endpoint2,
-                    coordinate: { ...section.endpoint2.coordinate, x: toNumber(event.target.value) },
-                  },
-                })
-              }
-            />
-          </label>
-          <label>
-            <span>Y</span>
-            <input
-              type="number"
-              value={section.endpoint2.coordinate.y}
-              onChange={(event) =>
-                updateSection(section.id, {
-                  endpoint2: {
-                    ...section.endpoint2,
-                    coordinate: { ...section.endpoint2.coordinate, y: toNumber(event.target.value) },
-                  },
-                })
-              }
-            />
-          </label>
-          <label>
-            <span>Signal 1</span>
-            <select
-              value={section.endpoint2.signal1 ?? ''}
-              onChange={(event) =>
-                updateSection(section.id, {
-                  endpoint2: {
-                    ...section.endpoint2,
-                    signal1: event.target.value === '' ? null : (event.target.value as 'Block' | 'Path'),
-                  },
-                })
-              }
-            >
-              <option value="">None</option>
-              {renderSelectOptions(signalTypes)}
-            </select>
-          </label>
-          <label>
-            <span>Signal 2</span>
-            <select
-              value={section.endpoint2.signal2 ?? ''}
-              onChange={(event) =>
-                updateSection(section.id, {
-                  endpoint2: {
-                    ...section.endpoint2,
-                    signal2: event.target.value === '' ? null : (event.target.value as 'Block' | 'Path'),
-                  },
-                })
-              }
-            >
-              <option value="">None</option>
-              {renderSelectOptions(signalTypes)}
-            </select>
-          </label>
-          <label>
-            <span>Entrance Mode</span>
-            <select
-              value={section.endpoint2.entranceMode}
-              onChange={(event) =>
-                updateSection(section.id, {
-                  endpoint2: {
-                    ...section.endpoint2,
-                    entranceMode: event.target.value as 'Allowed' | 'Blocked',
-                  },
-                })
-              }
-            >
-              {renderSelectOptions(entranceModes)}
-            </select>
-          </label>
-        </div>
-      </div>
     </div>
   )
 }
@@ -941,7 +1227,13 @@ function IntersectionEditor({
   )
 }
 
-export function Inspector(): JSX.Element {
+export function Inspector({
+  collapsed,
+  onToggleCollapse,
+}: {
+  collapsed: boolean
+  onToggleCollapse: () => void
+}): JSX.Element {
   const map = useEditorStore((state) => state.map)
   const selectedEntity = useEditorStore((state) => state.selectedEntity)
   const updateMapTitle = useEditorStore((state) => state.updateMapTitle)
@@ -950,13 +1242,52 @@ export function Inspector(): JSX.Element {
   const updateSection = useEditorStore((state) => state.updateSection)
   const updateIntersection = useEditorStore((state) => state.updateIntersection)
   const updateSignal = useEditorStore((state) => state.updateSignal)
+  const updateJunctionNumber = useEditorStore((state) => state.updateJunctionNumber)
   const deleteSelected = useEditorStore((state) => state.deleteSelected)
   const exportMap = useEditorStore((state) => state.exportMap)
   const loadFromDisk = useEditorStore((state) => state.loadFromDisk)
   const clearMap = useEditorStore((state) => state.clearMap)
+  const relocateSelected = useEditorStore((state) => state.relocateSelected)
+  const runConnectionAutoFix = useEditorStore((state) => state.runConnectionAutoFix)
   const getSectionConnectivityGraph = useEditorStore((state) => state.getSectionConnectivityGraph)
   const findSectionPath = useEditorStore((state) => state.findSectionPath)
+  const updateMapSettings = useEditorStore((state) => state.updateMapSettings)
   const [pathTarget, setPathTarget] = useState('')
+  const [relocateX, setRelocateX] = useState('')
+  const [relocateY, setRelocateY] = useState('')
+  const [lastAutoFixCount, setLastAutoFixCount] = useState<number | null>(null)
+  const [collapsedSections, setCollapsedSections] = useState<{
+    mapUi: boolean
+    selection: boolean
+    connectivity: boolean
+    review: boolean
+    relocate: boolean
+    totals: boolean
+    legend: boolean
+  }>(map.settings.editorState.inspectorSections)
+
+  useEffect(() => {
+    setCollapsedSections(map.settings.editorState.inspectorSections)
+  }, [map.settings.editorState.inspectorSections])
+
+  function toggleSection(
+    key: 'mapUi' | 'selection' | 'connectivity' | 'review' | 'relocate' | 'totals' | 'legend',
+  ): void {
+    setCollapsedSections((current) => ({
+      ...current,
+      [key]: !current[key],
+    }))
+
+    updateMapSettings({
+      editorState: {
+        ...map.settings.editorState,
+        inspectorSections: {
+          ...map.settings.editorState.inspectorSections,
+          [key]: !map.settings.editorState.inspectorSections[key],
+        },
+      },
+    })
+  }
 
   const selectedStation = useMemo(() => {
     if (selectedEntity?.entityType !== 'station') {
@@ -986,84 +1317,11 @@ export function Inspector(): JSX.Element {
     return map.intersections.find((x) => x.id === selectedEntity.id) ?? null
   }, [map.intersections, selectedEntity])
 
-  const junctionMetadata = useMemo(() => {
-    const grouped: Record<
-      string,
-      Array<{ sectionNumber: number; entranceMode: 'Allowed' | 'Blocked' }>
-    > = {}
+  const junctionMetadata = useMemo(() => buildJunctionMetadata(map) as JunctionMetadata[], [map])
 
-    for (const section of map.sections) {
-      const endpoints: Array<{ x: number; y: number; entranceMode: 'Allowed' | 'Blocked' }> = [
-        {
-          x: section.endpoint1.coordinate.x,
-          y: section.endpoint1.coordinate.y,
-          entranceMode: section.endpoint1.entranceMode,
-        },
-        {
-          x: section.endpoint2.coordinate.x,
-          y: section.endpoint2.coordinate.y,
-          entranceMode: section.endpoint2.entranceMode,
-        },
-      ]
-
-      for (const endpoint of endpoints) {
-        const key = `${Math.round(endpoint.x)}:${Math.round(endpoint.y)}`
-        if (!grouped[key]) {
-          grouped[key] = []
-        }
-
-        grouped[key].push({
-          sectionNumber: section.sectionNumber,
-          entranceMode: endpoint.entranceMode,
-        })
-      }
-    }
-
-    const junctions: JunctionMetadata[] = []
-    const typeCounters: Record<'Merge' | 'Split' | 'Junction' | 'Undefined', number> = {
-      Merge: 0,
-      Split: 0,
-      Junction: 0,
-      Undefined: 0,
-    }
-
-    for (const [id, entries] of Object.entries(grouped)) {
-      if (entries.length < 3) {
-        continue
-      }
-
-      const [xText, yText] = id.split(':')
-      const x = Number(xText)
-      const y = Number(yText)
-      const allowedCount = entries.filter((entry) => entry.entranceMode === 'Allowed').length
-      const blockedCount = entries.length - allowedCount
-
-      let type: JunctionMetadata['type'] = 'Junction'
-      if (blockedCount >= 2 && allowedCount === 1) {
-        type = 'Merge'
-      } else if (allowedCount >= 2 && blockedCount === 1) {
-        type = 'Split'
-      }
-
-      typeCounters[type] += 1
-      const connectedSectionNumbers = Array.from(
-        new Set(entries.map((entry) => entry.sectionNumber)),
-      ).sort((a, b) => a - b)
-
-      junctions.push({
-        id,
-        x,
-        y,
-        type,
-        label: `${type} ${typeCounters[type]}`,
-        connectedSectionNumbers,
-        allowedCount,
-        blockedCount,
-      })
-    }
-
-    return junctions
-  }, [map.sections])
+  const junctionLabelsByCoordinate = useMemo(() => {
+    return new Map(junctionMetadata.map((junction) => [`${Math.round(junction.x)}:${Math.round(junction.y)}`, junction.displayLabel]))
+  }, [junctionMetadata])
 
   const selectedJunction = useMemo(() => {
     if (selectedEntity?.entityType !== 'junction') {
@@ -1073,6 +1331,32 @@ export function Inspector(): JSX.Element {
     return junctionMetadata.find((junction) => junction.id === selectedEntity.id) ?? null
   }, [junctionMetadata, selectedEntity])
 
+  const selectedAnchor = useMemo(() => {
+    if (selectedStation) {
+      return {
+        x: (selectedStation.inbound.x + selectedStation.outbound.x) / 2,
+        y: (selectedStation.inbound.y + selectedStation.outbound.y) / 2,
+      }
+    }
+
+    if (selectedSection) {
+      return {
+        x: (selectedSection.endpoint1.coordinate.x + selectedSection.endpoint2.coordinate.x) / 2,
+        y: (selectedSection.endpoint1.coordinate.y + selectedSection.endpoint2.coordinate.y) / 2,
+      }
+    }
+
+    if (selectedIntersection) {
+      return { ...selectedIntersection.center }
+    }
+
+    if (selectedSignal) {
+      return { ...selectedSignal.coordinate }
+    }
+
+    return null
+  }, [selectedIntersection, selectedSection, selectedSignal, selectedStation])
+
   const sectionGraph = useMemo(() => getSectionConnectivityGraph(), [map.sections, getSectionConnectivityGraph])
 
   const selectedSectionNeighbors = useMemo(() => {
@@ -1080,7 +1364,7 @@ export function Inspector(): JSX.Element {
       return []
     }
 
-    return sectionGraph.adjacency[selectedSection.sectionNumber] ?? []
+    return sectionGraph.directedAdjacency[selectedSection.sectionNumber] ?? []
   }, [sectionGraph, selectedSection])
 
   const selectedSectionReachable = useMemo(() => {
@@ -1093,7 +1377,7 @@ export function Inspector(): JSX.Element {
 
     while (queue.length > 0) {
       const current = queue.shift() as number
-      const neighbors = sectionGraph.adjacency[current] ?? []
+      const neighbors = sectionGraph.directedAdjacency[current] ?? []
       for (const neighbor of neighbors) {
         if (visited.has(neighbor)) {
           continue
@@ -1122,9 +1406,22 @@ export function Inspector(): JSX.Element {
     return findSectionPath(selectedSection.sectionNumber, target)
   }, [findSectionPath, pathTarget, selectedSection])
 
+  const connectionReview = useMemo(() => buildConnectionReview(map), [map])
+
   useEffect(() => {
     setPathTarget('')
   }, [selectedSection?.id])
+
+  useEffect(() => {
+    if (!selectedAnchor) {
+      setRelocateX('')
+      setRelocateY('')
+      return
+    }
+
+    setRelocateX(String(Math.round(selectedAnchor.x)))
+    setRelocateY(String(Math.round(selectedAnchor.y)))
+  }, [selectedAnchor?.x, selectedAnchor?.y])
 
   async function handleImport(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0]
@@ -1142,166 +1439,377 @@ export function Inspector(): JSX.Element {
   }
 
   return (
-    <aside className="inspector">
+    <aside className={collapsed ? 'inspector collapsed-panel' : 'inspector'}>
       <header className="panel-header">
-        <p className="eyebrow">Properties</p>
-        <h2>Inspector</h2>
+        <div className="panel-header-copy">
+          <p className="eyebrow">Properties</p>
+          {!collapsed && <h2>Inspector</h2>}
+        </div>
+        <button
+          type="button"
+          className="panel-collapse-button"
+          onClick={onToggleCollapse}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? 'Expand inspector' : 'Collapse inspector'}
+        >
+          {collapsed ? '+' : '−'}
+        </button>
       </header>
 
-      <div className="form-grid">
-        <label>
-          <span>Map Title</span>
-          <input
-            type="text"
-            value={map.settings.title}
-            onChange={(event) => updateMapTitle(event.target.value)}
-          />
-        </label>
-      </div>
+      {!collapsed && (
+        <div className="panel-body">
+          <section className="inspector-section-card">
+            <button
+              type="button"
+              className="inspector-section-header"
+              onClick={() => toggleSection('mapUi')}
+              aria-expanded={!collapsedSections.mapUi}
+            >
+              <span>Map Title and UI Settings</span>
+              <span className="inspector-section-toggle">{collapsedSections.mapUi ? '+' : '−'}</span>
+            </button>
 
-      <section className="ui-settings">
-        <h3>UI Settings</h3>
-        <div className="form-grid compact-grid">
-          <label>
-            <span>Grid Width</span>
-            <input
-              type="number"
-              min={10}
-              value={map.settings.worldWidth}
-              onChange={(event) => updateGridSize(Number(event.target.value), map.settings.worldHeight)}
-            />
-          </label>
-          <label>
-            <span>Grid Height</span>
-            <input
-              type="number"
-              min={10}
-              value={map.settings.worldHeight}
-              onChange={(event) => updateGridSize(map.settings.worldWidth, Number(event.target.value))}
-            />
-          </label>
-        </div>
-      </section>
+            {!collapsedSections.mapUi && (
+              <div className="inspector-section-body">
+                <div className="form-grid">
+                  <label>
+                    <span>Map Title</span>
+                    <input
+                      type="text"
+                      value={map.settings.title}
+                      onChange={(event) => updateMapTitle(event.target.value)}
+                    />
+                  </label>
+                </div>
 
-      <div className="io-actions">
-        <button
-          type="button"
-          onClick={() => {
-            const data = exportMap()
-            const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-            download(`stm-map-${stamp}.json`, data)
-          }}
-        >
-          Export JSON
-        </button>
+                <section className="ui-settings">
+                  <h3>UI Settings</h3>
+                  <div className="form-grid compact-grid">
+                    <label>
+                      <span>Grid Width</span>
+                      <input
+                        type="number"
+                        min={10}
+                        value={map.settings.worldWidth}
+                        onChange={(event) =>
+                          updateGridSize(Number(event.target.value), map.settings.worldHeight)
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>Grid Height</span>
+                      <input
+                        type="number"
+                        min={10}
+                        value={map.settings.worldHeight}
+                        onChange={(event) =>
+                          updateGridSize(map.settings.worldWidth, Number(event.target.value))
+                        }
+                      />
+                    </label>
+                  </div>
+                </section>
 
-        <button
-          type="button"
-          className="danger-button"
-          onClick={() => {
-            const confirmed = window.confirm(
-              'Clear the current map and saved local map data? This cannot be undone.',
-            )
-            if (!confirmed) {
-              return
-            }
+                <div className="io-actions">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const data = exportMap()
+                      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+                      download(`stm-map-${stamp}.json`, data)
+                    }}
+                  >
+                    Export JSON
+                  </button>
 
-            clearMap()
-          }}
-        >
-          Clear Grid / Save
-        </button>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    onClick={() => {
+                      const confirmed = window.confirm(
+                        'Clear the current map and saved local map data? This cannot be undone.',
+                      )
+                      if (!confirmed) {
+                        return
+                      }
 
-        <label className="file-import">
-          <span>Import JSON</span>
-          <input type="file" accept="application/json" onChange={handleImport} />
-        </label>
-      </div>
+                      clearMap()
+                    }}
+                  >
+                    Clear Grid / Save
+                  </button>
 
-      <div className="selection-actions">
-        <button
-          type="button"
-          className="danger-button"
-          onClick={() => deleteSelected()}
-          disabled={
-            !selectedStation &&
-            !selectedSection &&
-            !selectedSignal &&
-            !selectedIntersection &&
-            !selectedJunction
-          }
-        >
-          Delete Selected
-        </button>
-      </div>
-
-      <section className="selection-details">
-        <h3>Selection</h3>
-        {!selectedStation &&
-          !selectedSection &&
-          !selectedSignal &&
-          !selectedIntersection &&
-          !selectedJunction && (
-          <p>Nothing selected. Choose Select tool and click an entity.</p>
-          )}
-
-        {selectedStation && <StationEditor station={selectedStation} updateStation={updateStation} />}
-        {selectedSection && <SectionEditor section={selectedSection} updateSection={updateSection} />}
-        {selectedSection && (
-          <div className="nested-editor">
-            <h4>Connectivity</h4>
-            <p>Directly Connected: {formatSectionNumbers(selectedSectionNeighbors)}</p>
-            <p>Reachable Sections: {formatSectionNumbers(selectedSectionReachable)}</p>
-
-            <div className="form-grid compact-grid">
-              <label>
-                <span>Path Target Section #</span>
-                <input
-                  type="number"
-                  value={pathTarget}
-                  onChange={(event) => setPathTarget(event.target.value)}
-                />
-              </label>
-            </div>
-
-            {pathTarget.trim() !== '' && (
-              <p>
-                Path:{' '}
-                {selectedSectionPath ? selectedSectionPath.join(' -> ') : 'No path found'}
-              </p>
+                  <label className="file-import">
+                    <span>Import JSON</span>
+                    <input type="file" accept="application/json" onChange={handleImport} />
+                  </label>
+                </div>
+              </div>
             )}
-          </div>
-        )}
-        {selectedSignal && <SignalEditor signal={selectedSignal} updateSignal={updateSignal} />}
-        {selectedIntersection && (
-          <IntersectionEditor
-            intersection={selectedIntersection}
-            updateIntersection={updateIntersection}
-          />
-        )}
-        {selectedJunction && <JunctionEditor junction={selectedJunction} />}
-      </section>
+          </section>
 
-      <section className="stats-panel">
-        <h3>Map Totals</h3>
-        <p>Stations: {map.stations.length}</p>
-        <p>Sections: {map.sections.length}</p>
-        <p>Intersections: {map.intersections.length}</p>
-        <p>Signals: {map.signals.length}</p>
-      </section>
+          <section className="inspector-section-card">
+            <button
+              type="button"
+              className="inspector-section-header"
+              onClick={() => toggleSection('selection')}
+              aria-expanded={!collapsedSections.selection}
+            >
+              <span>Selection</span>
+              <span className="inspector-section-toggle">{collapsedSections.selection ? '+' : '−'}</span>
+            </button>
 
-      <section className="stats-panel legend-panel">
-        <h3>Canvas Legend</h3>
-        <p>Station layout: Freight blocks on the left, title and station number on the right.</p>
-        <p>Outbound indicator: OUT + arrow points toward station outbound direction.</p>
-        <p>Freight block colors: Magenta = Freight, Cyan = Liquid.</p>
-        <p>Mode labels: L = Load, U = Unload.</p>
-        <p>Junction markers: Merge (gray square), Split (red triangle), Junction (black circle), Undefined (gray diamond).</p>
-        <p>Signal status dot: Green = connected, Amber = partial, Gray = unconnected.</p>
-        <p>Section labels: Number shown at each section center.</p>
-        <p>Junction labels: Merge #, Split #, Junction #, Undefined #.</p>
-        <p>Intersection labels: Intersection # with fixed four-arm connection points.</p>
-      </section>
+            {!collapsedSections.selection && (
+              <div className="inspector-section-body">
+                <section className="selection-details">
+                  {!selectedStation &&
+                    !selectedSection &&
+                    !selectedSignal &&
+                    !selectedIntersection &&
+                    !selectedJunction && (
+                      <p>Nothing selected. Choose Select tool and click an entity.</p>
+                    )}
+
+                  {selectedStation && <StationEditor station={selectedStation} updateStation={updateStation} />}
+                  {selectedSection && (
+                    <SectionEditor
+                      map={map}
+                      junctionLabelsByCoordinate={junctionLabelsByCoordinate}
+                      section={selectedSection}
+                      defaultSectionColor={map.settings.defaultSectionColor}
+                      updateSection={updateSection}
+                    />
+                  )}
+                  {selectedSignal && <SignalEditor signal={selectedSignal} updateSignal={updateSignal} />}
+                  {selectedIntersection && (
+                    <IntersectionEditor
+                      intersection={selectedIntersection}
+                      updateIntersection={updateIntersection}
+                    />
+                  )}
+                  {selectedJunction && (
+                    <JunctionEditor junction={selectedJunction} onChangeNumber={updateJunctionNumber} />
+                  )}
+                </section>
+
+                <div className="selection-actions selection-actions-bottom">
+                  <button
+                    type="button"
+                    className="danger-button"
+                    onClick={() => deleteSelected()}
+                    disabled={
+                      !selectedStation &&
+                      !selectedSection &&
+                      !selectedSignal &&
+                      !selectedIntersection &&
+                      !selectedJunction
+                    }
+                  >
+                    Delete Selected
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="inspector-section-card">
+            <button
+              type="button"
+              className="inspector-section-header"
+              onClick={() => toggleSection('connectivity')}
+              aria-expanded={!collapsedSections.connectivity}
+            >
+              <span>Connectivity</span>
+              <span className="inspector-section-toggle">
+                {collapsedSections.connectivity ? '+' : '−'}
+              </span>
+            </button>
+
+            {!collapsedSections.connectivity && (
+              <div className="inspector-section-body">
+                {!selectedSection && <p>Select a section to inspect connectivity.</p>}
+
+                {selectedSection && (
+                  <div className="nested-editor">
+                    <p>Directly Connected: {formatSectionNumbers(selectedSectionNeighbors)}</p>
+                    <p>Reachable Sections: {formatSectionNumbers(selectedSectionReachable)}</p>
+
+                    <div className="form-grid compact-grid">
+                      <label>
+                        <span>Path Target Section #</span>
+                        <input
+                          type="number"
+                          value={pathTarget}
+                          onChange={(event) => setPathTarget(event.target.value)}
+                        />
+                      </label>
+                    </div>
+
+                    {pathTarget.trim() !== '' && (
+                      <p>
+                        Path: {selectedSectionPath ? selectedSectionPath.join(' -> ') : 'No path found'}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          <section className="inspector-section-card">
+            <button
+              type="button"
+              className="inspector-section-header"
+              onClick={() => toggleSection('review')}
+              aria-expanded={!collapsedSections.review}
+            >
+              <span>Connection Review</span>
+              <span className="inspector-section-toggle">{collapsedSections.review ? '+' : '−'}</span>
+            </button>
+
+            {!collapsedSections.review && (
+              <div className="inspector-section-body">
+                <p>
+                  Issues: {connectionReview.issues.length} ({connectionReview.issues.filter((item) => item.severity === 'error').length} errors,{' '}
+                  {connectionReview.issues.filter((item) => item.severity === 'warning').length} warnings)
+                </p>
+
+                <div className="selection-actions">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const count = runConnectionAutoFix()
+                      setLastAutoFixCount(count)
+                    }}
+                  >
+                    Auto-fix Metadata
+                  </button>
+                </div>
+
+                {lastAutoFixCount !== null && (
+                  <p>{lastAutoFixCount > 0 ? `Applied ${lastAutoFixCount} metadata fixes.` : 'No metadata fixes were needed.'}</p>
+                )}
+
+                <div className="review-issues-list">
+                  {connectionReview.issues.length === 0 && <p>No connection issues detected.</p>}
+                  {connectionReview.issues.map((issue) => (
+                    <div
+                      key={issue.id}
+                      className={issue.severity === 'error' ? 'review-issue-row error' : 'review-issue-row warning'}
+                    >
+                      <p>{issue.message}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="inspector-section-card">
+            <button
+              type="button"
+              className="inspector-section-header"
+              onClick={() => toggleSection('relocate')}
+              aria-expanded={!collapsedSections.relocate}
+            >
+              <span>Relocate Selection</span>
+              <span className="inspector-section-toggle">{collapsedSections.relocate ? '+' : '−'}</span>
+            </button>
+
+            {!collapsedSections.relocate && (
+              <div className="inspector-section-body">
+                {!selectedAnchor && <p>Select a station, section, intersection, or signal to relocate.</p>}
+
+                {selectedAnchor && (
+                  <div className="nested-editor">
+                    <p>Moves the selected component and connected layout while preserving its shape.</p>
+                    <div className="form-grid compact-grid">
+                      <label>
+                        <span>New X</span>
+                        <input
+                          type="number"
+                          value={relocateX}
+                          onChange={(event) => setRelocateX(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        <span>New Y</span>
+                        <input
+                          type="number"
+                          value={relocateY}
+                          onChange={(event) => setRelocateY(event.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <div className="selection-actions">
+                      <button
+                        type="button"
+                        onClick={() => relocateSelected(toNumber(relocateX), toNumber(relocateY))}
+                      >
+                        Relocate
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          <section className="inspector-section-card">
+            <button
+              type="button"
+              className="inspector-section-header"
+              onClick={() => toggleSection('totals')}
+              aria-expanded={!collapsedSections.totals}
+            >
+              <span>Map Totals</span>
+              <span className="inspector-section-toggle">{collapsedSections.totals ? '+' : '−'}</span>
+            </button>
+
+            {!collapsedSections.totals && (
+              <div className="inspector-section-body">
+                <section className="stats-panel">
+                  <p>Stations: {map.stations.length}</p>
+                  <p>Sections: {map.sections.length}</p>
+                  <p>Intersections: {map.intersections.length}</p>
+                  <p>Signals: {map.signals.length}</p>
+                </section>
+              </div>
+            )}
+          </section>
+
+          <section className="inspector-section-card">
+            <button
+              type="button"
+              className="inspector-section-header"
+              onClick={() => toggleSection('legend')}
+              aria-expanded={!collapsedSections.legend}
+            >
+              <span>Canvas Legend</span>
+              <span className="inspector-section-toggle">{collapsedSections.legend ? '+' : '−'}</span>
+            </button>
+
+            {!collapsedSections.legend && (
+              <div className="inspector-section-body">
+                <section className="stats-panel legend-panel">
+                  <p>Station layout: Freight blocks on the left, title and station number on the right.</p>
+                  <p>Outbound indicator: OUT + arrow points toward station outbound direction.</p>
+                  <p>Freight block colors: Magenta = Freight, Cyan = Liquid.</p>
+                  <p>Mode labels: L = Load, U = Unload.</p>
+                  <p>
+                    Junction markers: Merge (gray square), Split (red triangle), Junction (black circle),
+                    Invalid (gray diamond).
+                  </p>
+                  <p>Signal status dot: Green = connected, Amber = partial, Gray = unconnected.</p>
+                  <p>Section labels: Number shown at each section center.</p>
+                  <p>Junction labels: Merge #, Split #, Junction #, Invalid #.</p>
+                  <p>Intersection labels: Intersection # with fixed four-arm connection points.</p>
+                </section>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </aside>
   )
 }

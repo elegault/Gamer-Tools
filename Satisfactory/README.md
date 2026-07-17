@@ -73,6 +73,29 @@ Application storage will use json files.
 
 For every set of completed connection points (including dead-ends), the grid should show both user-defined signals and their locations per-section, and show suggested "correct" signals that differ from what is defined (based on the allowed directions for each connected section).
 
+## Satisfactory Railway Connection Guidelines
+
+### General Connection and Routing Rules
+
+- Right-hand side rule
+  - Signals always go on the right-hand side relative to the direction of travel.
+- Path vs Block
+  - Path = before a decision point (split, merge, station entry)
+  - Block = after a decision point (merge output, station exit)
+- Bi‑directional sections
+  - Each direction gets its own Path + Block, placed on the right-hand side relative to that direction.
+
+### Questions and Answers/FAQ
+
+Q: ** How do train routes determine which sections to take to the next station in the timetable?
+A: Trains do not follow your intended route. They follow the shortest signaled route. If you don’t restrict splits, trains will choose the wrong branch.
+
+Q: ** How are block and path signals placed?
+A: Placement pattern is always:
+- Path before the decision point
+- Block after the decision point
+- Right-hand side relative to direction of travel
+
 ## Other Features
 
 The final phase of this application will add support for defining train routes (train names, stops, load/unload and material rules, etc.).

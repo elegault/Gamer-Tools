@@ -1,0 +1,942 @@
+{
+  "schemaVersion": 1,
+  "lastUpdatedIso": "2026-07-16T03:59:22.015Z",
+  "settings": {
+    "title": "Eric's Railroad",
+    "worldWidth": 1000,
+    "worldHeight": 1000,
+    "defaultSectionColor": "#ffffff",
+    "junctionNumberOverrides": [
+      {
+        "junctionId": "-1051:1823",
+        "junctionNumber": 7,
+        "mergeNumber": 7
+      },
+      {
+        "junctionId": "-447:1835",
+        "junctionNumber": 82,
+        "mergeNumber": 2
+      },
+      {
+        "junctionId": "-327:1914",
+        "junctionNumber": 80,
+        "mergeNumber": 1
+      },
+      {
+        "junctionId": "-177:1865",
+        "junctionNumber": 0,
+        "splitNumber": 2
+      },
+      {
+        "junctionId": "-702:1450",
+        "junctionNumber": 96,
+        "mergeNumber": 4
+      },
+      {
+        "junctionId": "-606:1532",
+        "junctionNumber": 99,
+        "splitNumber": 3
+      },
+      {
+        "junctionId": "-614:1353",
+        "junctionNumber": 98,
+        "mergeNumber": 3
+      },
+      {
+        "junctionId": "-610:1257",
+        "junctionNumber": 97
+      },
+      {
+        "junctionId": "-716:1985",
+        "splitNumber": 1
+      },
+      {
+        "junctionId": "-837:1514",
+        "junctionNumber": 94,
+        "mergeNumber": 5
+      }
+    ],
+    "editorState": {
+      "viewport": {
+        "zoom": 1.9845806025504238,
+        "panX": 0,
+        "panY": 0
+      },
+      "lastSelected": null,
+      "panels": {
+        "topbarCollapsed": false,
+        "sidebarCollapsed": false,
+        "inspectorCollapsed": false,
+        "sidebarWidth": 260,
+        "inspectorWidth": 900
+      },
+      "inspectorSections": {
+        "mapUi": false,
+        "selection": false,
+        "connectivity": false,
+        "review": false,
+        "relocate": false,
+        "totals": false,
+        "legend": false
+      }
+    },
+    "labelStyles": {
+      "section": {
+        "shape": "Circle",
+        "width": 20,
+        "height": 30,
+        "radius": 10,
+        "backgroundColor": "#ff0000",
+        "borderColor": "#e2e8f0",
+        "borderWidth": 1,
+        "textColor": "#ffffff",
+        "textSize": 23,
+        "textYOffset": 0
+      },
+      "intersection": {
+        "shape": "Rectangle",
+        "width": 20,
+        "height": 20,
+        "radius": 10,
+        "backgroundColor": "#dc2626",
+        "borderColor": "#000000",
+        "borderWidth": 1.1,
+        "textColor": "#ffffff",
+        "textSize": 14,
+        "textYOffset": 0
+      },
+      "junction": {
+        "Merge": {
+          "shape": "Hexagon",
+          "width": 14,
+          "height": 30,
+          "radius": 10,
+          "backgroundColor": "#ff9500",
+          "borderColor": "#0f172a",
+          "borderWidth": 1.2,
+          "textColor": "#ffffff",
+          "textSize": 14,
+          "textYOffset": 0
+        },
+        "Split": {
+          "shape": "Triangle",
+          "width": 64,
+          "height": 30,
+          "radius": 10,
+          "backgroundColor": "#f1f500",
+          "borderColor": "#0f172a",
+          "borderWidth": 1.2,
+          "textColor": "#000000",
+          "textSize": 28,
+          "textYOffset": 0
+        },
+        "Junction": {
+          "shape": "Circle",
+          "width": 14,
+          "height": 30,
+          "radius": 10,
+          "backgroundColor": "#111827",
+          "borderColor": "#e2e8f0",
+          "borderWidth": 1.2,
+          "textColor": "#fff700",
+          "textSize": 14,
+          "textYOffset": 0
+        },
+        "Undefined": {
+          "shape": "Diamond",
+          "width": 32,
+          "height": 60,
+          "radius": 20,
+          "backgroundColor": "#475569",
+          "borderColor": "#ff0000",
+          "borderWidth": 1.2,
+          "textColor": "#ffffff",
+          "textSize": 12,
+          "textYOffset": 0
+        }
+      }
+    }
+  },
+  "stations": [
+    {
+      "id": "station-49ffa15c-bf81-4c52-a2a3-194cdf044f25",
+      "stationName": "Tilburg",
+      "stationNumber": 8,
+      "color": "#c7d2fe",
+      "sectionInNumber": 32,
+      "sectionOutNumber": 1,
+      "inbound": {
+        "x": -1051.67,
+        "y": 2346.96
+      },
+      "outbound": {
+        "x": -971.6700000000001,
+        "y": 2346.96
+      },
+      "liquidFreightStationCount": 0,
+      "solidFreightStationCount": 0,
+      "freightStationSequence": [
+        {
+          "slotIndex": 1,
+          "stationType": "Freight",
+          "mode": "Unload",
+          "material": ""
+        },
+        {
+          "slotIndex": 2,
+          "stationType": "Freight",
+          "mode": "Unload",
+          "material": ""
+        },
+        {
+          "slotIndex": 3,
+          "stationType": "Liquid",
+          "mode": "Unload",
+          "material": ""
+        }
+      ],
+      "freightSectionMaterials": [],
+      "notes": ""
+    },
+    {
+      "id": "station-183d0d74-ccf9-45c1-98a0-ea74806c56fa",
+      "stationName": "Norrkoping",
+      "stationNumber": 1,
+      "color": "#c7d2fe",
+      "sectionInNumber": 8,
+      "sectionOutNumber": 7,
+      "inbound": {
+        "x": 824.0635572939398,
+        "y": 2151.015196839897
+      },
+      "outbound": {
+        "x": 904.0635572939398,
+        "y": 2151.015196839897
+      },
+      "liquidFreightStationCount": 0,
+      "solidFreightStationCount": 1,
+      "freightStationSequence": [
+        {
+          "slotIndex": 1,
+          "stationType": "Freight",
+          "mode": "Load",
+          "material": ""
+        }
+      ],
+      "freightSectionMaterials": [],
+      "notes": ""
+    },
+    {
+      "id": "station-a763754d-0467-4411-9524-95abf0d7a729",
+      "stationName": "Boras",
+      "stationNumber": 2,
+      "color": "#c7d2fe",
+      "sectionInNumber": 9,
+      "sectionOutNumber": 8,
+      "inbound": {
+        "x": 520.5640954586145,
+        "y": 2061.822661768546
+      },
+      "outbound": {
+        "x": 600.5640954586145,
+        "y": 2061.822661768546
+      },
+      "liquidFreightStationCount": 0,
+      "solidFreightStationCount": 1,
+      "freightStationSequence": [
+        {
+          "slotIndex": 1,
+          "stationType": "Freight",
+          "mode": "Load",
+          "material": ""
+        }
+      ],
+      "freightSectionMaterials": [],
+      "notes": ""
+    }
+  ],
+  "sections": [
+    {
+      "id": "section-e790fa72-67bf-4dfb-af9f-824f2fde7405",
+      "sectionNumber": 1,
+      "sectionName": "Section 1",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "OneWay1To2",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": -925.6700000000001,
+          "y": 2346.96
+        },
+        "stationConnection": {
+          "stationId": "station-49ffa15c-bf81-4c52-a2a3-194cdf044f25",
+          "side": "Right"
+        },
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 2,
+        "coordinate": {
+          "x": -716,
+          "y": 1985
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      }
+    },
+    {
+      "id": "section-1089bc18-5344-4824-bf14-4263e5bc4133",
+      "sectionNumber": 2,
+      "sectionName": "Section 2",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "OneWay1To2",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": -716,
+          "y": 1985
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 5,
+        "coordinate": {
+          "x": -326.7107606901973,
+          "y": 1914.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      }
+    },
+    {
+      "id": "section-d617fcca-32e3-4259-b0c6-c846fb06c3b2",
+      "sectionNumber": 3,
+      "sectionName": "Section 3",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "OneWay2To1",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 3,
+        "coordinate": {
+          "x": -824.0606284411007,
+          "y": 1853.8884411093425
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      },
+      "endpoint2": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": -716,
+          "y": 1985
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-0767d172-9be7-40c5-ba1f-3a236790daff",
+      "sectionNumber": 4,
+      "sectionName": "Section 4",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "OneWay2To1",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 4,
+        "coordinate": {
+          "x": -763.7723440314775,
+          "y": 1793.786293168305
+        },
+        "stationConnection": null,
+        "signal1": "Block",
+        "signal2": "Path",
+        "entranceMode": "Blocked"
+      },
+      "endpoint2": {
+        "sectionNumber": 5,
+        "coordinate": {
+          "x": -446.7107606901973,
+          "y": 1835.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": "Block",
+        "signal2": "Path",
+        "entranceMode": "Blocked"
+      }
+    },
+    {
+      "id": "section-06495dbd-7b19-48cf-ac66-73851fb96420",
+      "sectionNumber": 10,
+      "sectionName": "Section 10",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "Bidirectional",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 11,
+        "coordinate": {
+          "x": -605.7107606901973,
+          "y": 1532.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      },
+      "endpoint2": {
+        "sectionNumber": 4,
+        "coordinate": {
+          "x": -446.7107606901973,
+          "y": 1835.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      }
+    },
+    {
+      "id": "section-afb3505e-d1b9-4585-85a9-92ce9836c9a0",
+      "sectionNumber": 5,
+      "sectionName": "Section 5",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "Bidirectional",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 4,
+        "coordinate": {
+          "x": -446.7107606901973,
+          "y": 1835.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 2,
+        "coordinate": {
+          "x": -326.7107606901973,
+          "y": 1914.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-b5040c11-bfa0-485b-b085-001023535d15",
+      "sectionNumber": 6,
+      "sectionName": "Section 6",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "Bidirectional",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 2,
+        "coordinate": {
+          "x": -326.7107606901973,
+          "y": 1914.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      },
+      "endpoint2": {
+        "sectionNumber": 7,
+        "coordinate": {
+          "x": -176.71076069019728,
+          "y": 1865.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-0360e354-404e-407a-b854-6338c23e247b",
+      "sectionNumber": 9,
+      "sectionName": "Section 9",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "OneWay2To1",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 6,
+        "coordinate": {
+          "x": -176.71076069019728,
+          "y": 1865.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      },
+      "endpoint2": {
+        "sectionNumber": 9,
+        "coordinate": {
+          "x": 474.5640954586145,
+          "y": 2061.822661768546
+        },
+        "stationConnection": {
+          "stationId": "station-a763754d-0467-4411-9524-95abf0d7a729",
+          "side": "Left"
+        },
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-32292638-386c-4352-8d12-effea448f20d",
+      "sectionNumber": 7,
+      "sectionName": "Section 7",
+      "color": "#ffffff",
+      "sectionKind": "Curved",
+      "directionMode": "OneWay1To2",
+      "curveBend": 255.29877533113142,
+      "endpoint1": {
+        "sectionNumber": 6,
+        "coordinate": {
+          "x": -176.71076069019728,
+          "y": 1865.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 7,
+        "coordinate": {
+          "x": 950.0635572939398,
+          "y": 2151.015196839897
+        },
+        "stationConnection": {
+          "stationId": "station-183d0d74-ccf9-45c1-98a0-ea74806c56fa",
+          "side": "Right"
+        },
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      }
+    },
+    {
+      "id": "section-db3e7af5-692d-426a-bdb9-56698a5c4414",
+      "sectionNumber": 34,
+      "sectionName": "Section 34",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "OneWay2To1",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 17,
+        "coordinate": {
+          "x": -1050.7107606901973,
+          "y": 1823.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      },
+      "endpoint2": {
+        "sectionNumber": 34,
+        "coordinate": {
+          "x": -883.7723440314775,
+          "y": 1793.786293168305
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-f27054c5-0e3f-4367-bb78-c73d71d2e6a1",
+      "sectionNumber": 32,
+      "sectionName": "Section 32",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "OneWay1To2",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 17,
+        "coordinate": {
+          "x": -1050.7107606901973,
+          "y": 1823.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 32,
+        "coordinate": {
+          "x": -1097.67,
+          "y": 2346.96
+        },
+        "stationConnection": {
+          "stationId": "station-49ffa15c-bf81-4c52-a2a3-194cdf044f25",
+          "side": "Left"
+        },
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      }
+    },
+    {
+      "id": "section-64fdf05c-2861-4e60-a59b-4102952b7521",
+      "sectionNumber": 17,
+      "sectionName": "Section 17",
+      "color": "#ffffff",
+      "sectionKind": "Curved",
+      "directionMode": "OneWay1To2",
+      "curveBend": 51.99332446867114,
+      "endpoint1": {
+        "sectionNumber": 15,
+        "coordinate": {
+          "x": -836.7107606901973,
+          "y": 1514.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      },
+      "endpoint2": {
+        "sectionNumber": 32,
+        "coordinate": {
+          "x": -1050.7107606901973,
+          "y": 1823.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      }
+    },
+    {
+      "id": "section-928514f1-9dbe-44ab-99b4-be795eb01298",
+      "sectionNumber": 16,
+      "sectionName": "Section 16",
+      "color": "#ffffff",
+      "sectionKind": "Curved",
+      "directionMode": "OneWay2To1",
+      "curveBend": 30,
+      "endpoint1": {
+        "sectionNumber": 15,
+        "coordinate": {
+          "x": -837,
+          "y": 1514
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      },
+      "endpoint2": {
+        "sectionNumber": 16,
+        "coordinate": {
+          "x": -823.7723440314775,
+          "y": 1731.0838266566395
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-652a6d5f-01f6-4560-8752-8896aae15a8f",
+      "sectionNumber": 15,
+      "sectionName": "Section 15",
+      "color": "#ffffff",
+      "sectionKind": "Curved",
+      "directionMode": "Bidirectional",
+      "curveBend": 30,
+      "endpoint1": {
+        "sectionNumber": 12,
+        "coordinate": {
+          "x": -701.7107606901973,
+          "y": 1450.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 16,
+        "coordinate": {
+          "x": -837,
+          "y": 1514
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-ead1f8a7-c9c6-43e2-a839-af6b76d07b83",
+      "sectionNumber": 12,
+      "sectionName": "Section 12",
+      "color": "#ffffff",
+      "sectionKind": "Curved",
+      "directionMode": "Bidirectional",
+      "curveBend": 30,
+      "endpoint1": {
+        "sectionNumber": 14,
+        "coordinate": {
+          "x": -702,
+          "y": 1450
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 10,
+        "coordinate": {
+          "x": -606,
+          "y": 1532
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-cdae7ac2-1ceb-4a6e-8ec7-d95e20efab6d",
+      "sectionNumber": 14,
+      "sectionName": "Section 14",
+      "color": "#ffffff",
+      "sectionKind": "Curved",
+      "directionMode": "Bidirectional",
+      "curveBend": 30,
+      "endpoint1": {
+        "sectionNumber": 12,
+        "coordinate": {
+          "x": -702,
+          "y": 1450
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 11,
+        "coordinate": {
+          "x": -614,
+          "y": 1353
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-50fe5298-d87d-4a29-ab89-b099af7ca640",
+      "sectionNumber": 11,
+      "sectionName": "Section 11",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "Bidirectional",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 13,
+        "coordinate": {
+          "x": -614.2487417005527,
+          "y": 1353.2390383148268
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 10,
+        "coordinate": {
+          "x": -605.7107606901973,
+          "y": 1532.1369549857868
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-1364a373-8747-4e4c-9567-baa43026c35d",
+      "sectionNumber": 13,
+      "sectionName": "Section 13",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "Bidirectional",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 11,
+        "coordinate": {
+          "x": -614,
+          "y": 1353
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 18,
+        "coordinate": {
+          "x": -610,
+          "y": 1257
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-923f8459-6cd5-447e-80e6-2a14711c52cb",
+      "sectionNumber": 22,
+      "sectionName": "Section 22",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "Bidirectional",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 22,
+        "coordinate": {
+          "x": -739,
+          "y": 1147
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 13,
+        "coordinate": {
+          "x": -610,
+          "y": 1257
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-4b9d64a0-1427-443a-9820-1ab7486d03c1",
+      "sectionNumber": 8,
+      "sectionName": "Section 8",
+      "color": "#ffffff",
+      "sectionKind": "Curved",
+      "directionMode": "OneWay2To1",
+      "curveBend": -30,
+      "endpoint1": {
+        "sectionNumber": 8,
+        "coordinate": {
+          "x": 647,
+          "y": 2062
+        },
+        "stationConnection": {
+          "stationId": "station-a763754d-0467-4411-9524-95abf0d7a729",
+          "side": "Right"
+        },
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Blocked"
+      },
+      "endpoint2": {
+        "sectionNumber": 8,
+        "coordinate": {
+          "x": 778.0635572939398,
+          "y": 2151.015196839897
+        },
+        "stationConnection": {
+          "stationId": "station-183d0d74-ccf9-45c1-98a0-ea74806c56fa",
+          "side": "Left"
+        },
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-1ccb72a3-1bb2-47ea-b24e-7a4daad889a2",
+      "sectionNumber": 18,
+      "sectionName": "Section 18",
+      "color": "#ffffff",
+      "sectionKind": "Straight",
+      "directionMode": "Bidirectional",
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 13,
+        "coordinate": {
+          "x": -610,
+          "y": 1257
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 18,
+        "coordinate": {
+          "x": -456,
+          "y": 1149
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "entranceMode": "Allowed"
+      }
+    }
+  ],
+  "intersections": [
+    {
+      "id": "intersection-c5d5919d-894a-4ada-a3ee-4b3a1ea01e20",
+      "intersectionNumber": 1,
+      "color": "#fde68a",
+      "center": {
+        "x": -823.9177712982436,
+        "y": 1793.7455839664851
+      },
+      "armLength": 60
+    }
+  ],
+  "signals": []
+}
