@@ -60,6 +60,7 @@ function App() {
     }
 
     document.body.classList.add('is-resizing-panels')
+    document.body.classList.add('is-resizing-panels-horizontal')
   }
 
   useEffect(() => {
@@ -118,6 +119,8 @@ function App() {
 
       panelResizeRef.current = null
       document.body.classList.remove('is-resizing-panels')
+      document.body.classList.remove('is-resizing-panels-horizontal')
+      document.body.classList.remove('is-resizing-panels-vertical')
     }
 
     window.addEventListener('mousemove', handleMouseMove)
@@ -127,6 +130,8 @@ function App() {
       window.removeEventListener('mousemove', handleMouseMove)
       window.removeEventListener('mouseup', handleMouseUp)
       document.body.classList.remove('is-resizing-panels')
+      document.body.classList.remove('is-resizing-panels-horizontal')
+      document.body.classList.remove('is-resizing-panels-vertical')
     }
   }, [])
 

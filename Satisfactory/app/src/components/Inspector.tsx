@@ -199,6 +199,7 @@ type JunctionMetadata = {
   x: number
   y: number
   type: 'Merge' | 'Split' | 'Junction' | 'Invalid'
+  name: string
   junctionNumber: number
   mergeNumber: number | null
   splitNumber: number | null
@@ -220,6 +221,10 @@ function formatSectionNumbers(values: number[]): string {
 function JunctionEditor({
   junction,
   onChangeNumber,
+  onChangeName,
+  onMove,
+  beginHistoryBatch,
+  commitHistoryBatch,
 }: {
   junction: JunctionMetadata
   onChangeNumber: (
@@ -227,12 +232,24 @@ function JunctionEditor({
     numberType: 'junction' | 'merge' | 'split',
     junctionNumber: number,
   ) => void
+  onChangeName: (junctionId: string, name: string) => void
+  onMove: (junctionId: string, x: number, y: number) => void
+  beginHistoryBatch: () => void
+  commitHistoryBatch: () => void
 }): JSX.Element {
   return (
     <div className="selection-body">
       <p>{junction.displayLabel}</p>
 
       <div className="form-grid compact-grid">
+        <label>
+          <span>Name</span>
+          <input
+            type="text"
+            value={junction.name}
+            onChange={(event) => onChangeName(junction.id, event.target.value)}
+          />
+        </label>
         <label>
           <span>Junction Number</span>
           <input
@@ -263,11 +280,23 @@ function JunctionEditor({
         )}
         <label>
           <span>Coordinate X</span>
-          <input type="number" value={junction.x} readOnly />
+          <input
+            type="number"
+            value={junction.x}
+            onFocus={beginHistoryBatch}
+            onBlur={commitHistoryBatch}
+            onChange={(event) => onMove(junction.id, toNumber(event.target.value), junction.y)}
+          />
         </label>
         <label>
           <span>Coordinate Y</span>
-          <input type="number" value={junction.y} readOnly />
+          <input
+            type="number"
+            value={junction.y}
+            onFocus={beginHistoryBatch}
+            onBlur={commitHistoryBatch}
+            onChange={(event) => onMove(junction.id, junction.x, toNumber(event.target.value))}
+          />
         </label>
         <label>
           <span>Allowed Endpoints</span>
@@ -297,19 +326,48 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-function getCurveBendLimits(chordLength: number): { min: number; max: number } {
-  const min = Math.max(30, Math.round(chordLength * 0.12))
-  const max = Math.min(480, Math.round(chordLength * 0.85))
+function getCurveBendLimits(section: RailwaySection, chordLength: number): { min: number; max: number } {
+  const min = Math.max(0, Math.round(section.curveBendMin))
+  const fallbackMax = Math.round(chordLength * 0.85)
+  const max = Math.max(min, Math.min(1000, Math.round(section.curveBendMax ?? fallbackMax)))
   return { min, max }
 }
 
 function StationEditor({
   station,
   updateStation,
+  moveStation,
 }: {
   station: TrainStation
   updateStation: (id: string, patch: Partial<TrainStation>) => void
+  moveStation: (id: string, x: number, y: number) => void
 }): JSX.Element {
+  function moveStationCoordinate(
+    axis: 'x' | 'y',
+    endpointKey: 'inbound' | 'outbound',
+    nextValue: number,
+  ): void {
+    const anchor = {
+      x: (station.inbound.x + station.outbound.x) / 2,
+      y: (station.inbound.y + station.outbound.y) / 2,
+    }
+    const currentPoint = station[endpointKey]
+    const delta = nextValue - currentPoint[axis]
+
+    moveStation(
+      station.id,
+      axis === 'x' ? anchor.x + delta : anchor.x,
+      axis === 'y' ? anchor.y + delta : anchor.y,
+    )
+  }
+
+  const resolvedLayoutDirection =
+    station.layoutDirection === 'Default'
+      ? 'HorizontalMetaRight'
+      : station.layoutDirection === 'Reversed'
+        ? 'HorizontalMetaLeft'
+        : station.layoutDirection
+
   return (
     <div className="selection-body">
       <p>
@@ -346,6 +404,22 @@ function StationEditor({
           />
         </label>
         <label>
+          <span>Layout</span>
+          <select
+            value={resolvedLayoutDirection}
+            onChange={(event) =>
+              updateStation(station.id, {
+                layoutDirection: event.target.value as TrainStation['layoutDirection'],
+              })
+            }
+          >
+            <option value="HorizontalMetaRight">Horizontal: IN Left, OUT Right</option>
+            <option value="HorizontalMetaLeft">Horizontal: IN Right, OUT Left</option>
+            <option value="VerticalMetaTop">Vertical: IN Bottom, OUT Top</option>
+            <option value="VerticalMetaBottom">Vertical: IN Top, OUT Bottom</option>
+          </select>
+        </label>
+        <label>
           <span>Section In Number</span>
           <input
             type="number"
@@ -370,11 +444,7 @@ function StationEditor({
           <input
             type="number"
             value={station.inbound.x}
-            onChange={(event) =>
-              updateStation(station.id, {
-                inbound: { ...station.inbound, x: toNumber(event.target.value) },
-              })
-            }
+            onChange={(event) => moveStationCoordinate('x', 'inbound', toNumber(event.target.value))}
           />
         </label>
         <label>
@@ -382,11 +452,7 @@ function StationEditor({
           <input
             type="number"
             value={station.inbound.y}
-            onChange={(event) =>
-              updateStation(station.id, {
-                inbound: { ...station.inbound, y: toNumber(event.target.value) },
-              })
-            }
+            onChange={(event) => moveStationCoordinate('y', 'inbound', toNumber(event.target.value))}
           />
         </label>
         <label>
@@ -394,11 +460,7 @@ function StationEditor({
           <input
             type="number"
             value={station.outbound.x}
-            onChange={(event) =>
-              updateStation(station.id, {
-                outbound: { ...station.outbound, x: toNumber(event.target.value) },
-              })
-            }
+            onChange={(event) => moveStationCoordinate('x', 'outbound', toNumber(event.target.value))}
           />
         </label>
         <label>
@@ -406,11 +468,7 @@ function StationEditor({
           <input
             type="number"
             value={station.outbound.y}
-            onChange={(event) =>
-              updateStation(station.id, {
-                outbound: { ...station.outbound, y: toNumber(event.target.value) },
-              })
-            }
+            onChange={(event) => moveStationCoordinate('y', 'outbound', toNumber(event.target.value))}
           />
         </label>
         <label>
@@ -564,12 +622,14 @@ function SectionEditor({
   section,
   defaultSectionColor,
   updateSection,
+  moveSectionEndpoint,
 }: {
   map: Pick<MapDocument, 'sections' | 'stations' | 'intersections'>
   junctionLabelsByCoordinate: Map<string, string>
   section: RailwaySection
   defaultSectionColor: string
   updateSection: (id: string, patch: Partial<RailwaySection>) => void
+  moveSectionEndpoint: (id: string, endpointKey: 'endpoint1' | 'endpoint2', x: number, y: number) => void
 }): JSX.Element {
   const dx = section.endpoint2.coordinate.x - section.endpoint1.coordinate.x
   const dy = section.endpoint2.coordinate.y - section.endpoint1.coordinate.y
@@ -578,7 +638,7 @@ function SectionEditor({
   const directionX = dx / safeLength
   const directionY = dy / safeLength
   const straightLength = Math.round(chordLength)
-  const { min: minCurveBend, max: maxCurveBend } = getCurveBendLimits(chordLength)
+  const { min: minCurveBend, max: maxCurveBend } = getCurveBendLimits(section, chordLength)
   const endpoint1ConnectedDisplay = getSectionEndpointConnectionDisplay(
     map,
     junctionLabelsByCoordinate,
@@ -648,12 +708,7 @@ function SectionEditor({
       y: Math.round(section.endpoint1.coordinate.y + directionY * nextLength),
     }
 
-    updateSection(section.id, {
-      endpoint2: {
-        ...section.endpoint2,
-        coordinate: nextEndpoint2,
-      },
-    })
+    moveSectionEndpoint(section.id, 'endpoint2', nextEndpoint2.x, nextEndpoint2.y)
   }
 
   function updateCurveBend(nextBendRaw: number): void {
@@ -662,11 +717,34 @@ function SectionEditor({
     updateSection(section.id, { curveBend: sign * magnitude })
   }
 
+  function updateCurveBendLimit(patch: Partial<Pick<RailwaySection, 'curveBendMin' | 'curveBendMax'>>): void {
+    const nextMin = patch.curveBendMin ?? section.curveBendMin
+    const nextMax = patch.curveBendMax ?? section.curveBendMax
+    const normalizedMin = Math.max(0, Math.round(nextMin))
+    const normalizedMax = Math.max(normalizedMin, Math.round(nextMax))
+    const currentMagnitude = Math.abs(Math.round(section.curveBend))
+    const clampedMagnitude = clamp(currentMagnitude, normalizedMin, normalizedMax)
+
+    updateSection(section.id, {
+      curveBendMin: normalizedMin,
+      curveBendMax: normalizedMax,
+      curveBend: (section.curveBend >= 0 ? 1 : -1) * clampedMagnitude,
+    })
+  }
+
   return (
     <div className="selection-body">
       <p>{getSectionDisplayLabel(section)}</p>
 
       <div className="form-grid compact-grid">
+        <label>
+          <span>Name</span>
+          <input
+            type="text"
+            value={section.sectionName}
+            onChange={(event) => updateSection(section.id, { sectionName: event.target.value })}
+          />
+        </label>
         <label>
           <span>Section ID</span>
           <input type="text" value={section.id} readOnly />
@@ -1003,8 +1081,24 @@ function SectionEditor({
               />
             </label>
             <label>
-              <span>Allowed Range</span>
-              <input type="text" readOnly value={`${minCurveBend}..${maxCurveBend}`} />
+              <span>Allowed Range Min</span>
+              <input
+                type="number"
+                min={0}
+                max={1000}
+                value={minCurveBend}
+                onChange={(event) => updateCurveBendLimit({ curveBendMin: toNumber(event.target.value) })}
+              />
+            </label>
+            <label>
+              <span>Allowed Range Max</span>
+              <input
+                type="number"
+                min={0}
+                max={1000}
+                value={maxCurveBend}
+                onChange={(event) => updateCurveBendLimit({ curveBendMax: toNumber(event.target.value) })}
+              />
             </label>
           </div>
 
@@ -1025,9 +1119,11 @@ function SectionEditor({
 function SignalEditor({
   signal,
   updateSignal,
+  moveSignal,
 }: {
   signal: Signal
   updateSignal: (id: string, patch: Partial<Signal>) => void
+  moveSignal: (id: string, x: number, y: number) => void
 }): JSX.Element {
   return (
     <div className="selection-body">
@@ -1076,11 +1172,7 @@ function SignalEditor({
           <input
             type="number"
             value={signal.coordinate.x}
-            onChange={(event) =>
-              updateSignal(signal.id, {
-                coordinate: { ...signal.coordinate, x: toNumber(event.target.value) },
-              })
-            }
+            onChange={(event) => moveSignal(signal.id, toNumber(event.target.value), signal.coordinate.y)}
           />
         </label>
         <label>
@@ -1088,11 +1180,7 @@ function SignalEditor({
           <input
             type="number"
             value={signal.coordinate.y}
-            onChange={(event) =>
-              updateSignal(signal.id, {
-                coordinate: { ...signal.coordinate, y: toNumber(event.target.value) },
-              })
-            }
+            onChange={(event) => moveSignal(signal.id, signal.coordinate.x, toNumber(event.target.value))}
           />
         </label>
       </div>
@@ -1149,9 +1237,13 @@ function SignalEditor({
 function IntersectionEditor({
   intersection,
   updateIntersection,
+  moveIntersection,
+  moveIntersectionArmLength,
 }: {
   intersection: Intersection
   updateIntersection: (id: string, patch: Partial<Intersection>) => void
+  moveIntersection: (id: string, x: number, y: number) => void
+  moveIntersectionArmLength: (id: string, armLength: number) => void
 }): JSX.Element {
   return (
     <div className="selection-body">
@@ -1181,11 +1273,7 @@ function IntersectionEditor({
           <input
             type="number"
             value={intersection.center.x}
-            onChange={(event) =>
-              updateIntersection(intersection.id, {
-                center: { ...intersection.center, x: toNumber(event.target.value) },
-              })
-            }
+            onChange={(event) => moveIntersection(intersection.id, toNumber(event.target.value), intersection.center.y)}
           />
         </label>
         <label>
@@ -1193,11 +1281,7 @@ function IntersectionEditor({
           <input
             type="number"
             value={intersection.center.y}
-            onChange={(event) =>
-              updateIntersection(intersection.id, {
-                center: { ...intersection.center, y: toNumber(event.target.value) },
-              })
-            }
+            onChange={(event) => moveIntersection(intersection.id, intersection.center.x, toNumber(event.target.value))}
           />
         </label>
         <label>
@@ -1207,11 +1291,7 @@ function IntersectionEditor({
             min={40}
             max={240}
             value={intersection.armLength}
-            onChange={(event) =>
-              updateIntersection(intersection.id, {
-                armLength: Math.max(40, Math.min(240, toNumber(event.target.value))),
-              })
-            }
+            onChange={(event) => moveIntersectionArmLength(intersection.id, toNumber(event.target.value))}
           />
         </label>
         <label>
@@ -1239,10 +1319,19 @@ export function Inspector({
   const updateMapTitle = useEditorStore((state) => state.updateMapTitle)
   const updateGridSize = useEditorStore((state) => state.updateGridSize)
   const updateStation = useEditorStore((state) => state.updateStation)
+  const moveStation = useEditorStore((state) => state.moveStation)
   const updateSection = useEditorStore((state) => state.updateSection)
+  const moveSectionEndpoint = useEditorStore((state) => state.moveSectionEndpoint)
   const updateIntersection = useEditorStore((state) => state.updateIntersection)
+  const moveIntersection = useEditorStore((state) => state.moveIntersection)
+  const moveIntersectionArmLength = useEditorStore((state) => state.moveIntersectionArmLength)
+  const moveJunction = useEditorStore((state) => state.moveJunction)
   const updateSignal = useEditorStore((state) => state.updateSignal)
+  const moveSignal = useEditorStore((state) => state.moveSignal)
   const updateJunctionNumber = useEditorStore((state) => state.updateJunctionNumber)
+  const updateJunctionName = useEditorStore((state) => state.updateJunctionName)
+  const beginHistoryBatch = useEditorStore((state) => state.beginHistoryBatch)
+  const commitHistoryBatch = useEditorStore((state) => state.commitHistoryBatch)
   const deleteSelected = useEditorStore((state) => state.deleteSelected)
   const exportMap = useEditorStore((state) => state.exportMap)
   const loadFromDisk = useEditorStore((state) => state.loadFromDisk)
@@ -1570,7 +1659,9 @@ export function Inspector({
                       <p>Nothing selected. Choose Select tool and click an entity.</p>
                     )}
 
-                  {selectedStation && <StationEditor station={selectedStation} updateStation={updateStation} />}
+                  {selectedStation && (
+                    <StationEditor station={selectedStation} updateStation={updateStation} moveStation={moveStation} />
+                  )}
                   {selectedSection && (
                     <SectionEditor
                       map={map}
@@ -1578,17 +1669,29 @@ export function Inspector({
                       section={selectedSection}
                       defaultSectionColor={map.settings.defaultSectionColor}
                       updateSection={updateSection}
+                      moveSectionEndpoint={moveSectionEndpoint}
                     />
                   )}
-                  {selectedSignal && <SignalEditor signal={selectedSignal} updateSignal={updateSignal} />}
+                  {selectedSignal && (
+                    <SignalEditor signal={selectedSignal} updateSignal={updateSignal} moveSignal={moveSignal} />
+                  )}
                   {selectedIntersection && (
                     <IntersectionEditor
                       intersection={selectedIntersection}
                       updateIntersection={updateIntersection}
+                      moveIntersection={moveIntersection}
+                      moveIntersectionArmLength={moveIntersectionArmLength}
                     />
                   )}
                   {selectedJunction && (
-                    <JunctionEditor junction={selectedJunction} onChangeNumber={updateJunctionNumber} />
+                    <JunctionEditor
+                      junction={selectedJunction}
+                      onChangeNumber={updateJunctionNumber}
+                      onChangeName={updateJunctionName}
+                      onMove={moveJunction}
+                      beginHistoryBatch={beginHistoryBatch}
+                      commitHistoryBatch={commitHistoryBatch}
+                    />
                   )}
                 </section>
 

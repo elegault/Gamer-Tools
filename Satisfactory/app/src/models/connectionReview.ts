@@ -48,6 +48,7 @@ export type JunctionMetadata = {
   x: number
   y: number
   type: JunctionType
+  name: string
   junctionNumber: number
   mergeNumber: number | null
   splitNumber: number | null
@@ -368,6 +369,7 @@ export function buildJunctionMetadata(map: MapDocument): JunctionMetadata[] {
       x,
       y,
       type,
+      name: '',
       junctionNumber: 0,
       mergeNumber: null,
       splitNumber: null,
@@ -390,20 +392,23 @@ export function buildJunctionMetadata(map: MapDocument): JunctionMetadata[] {
     const junctionNumber = junctionNumberMap.get(junction.id) ?? 0
     const mergeNumber = junction.type === 'Merge' ? (mergeNumberMap.get(junction.id) ?? null) : null
     const splitNumber = junction.type === 'Split' ? (splitNumberMap.get(junction.id) ?? null) : null
+    const overrideName = overrides.get(junction.id)?.displayName?.trim() ?? ''
     const displayNumber =
       junction.type === 'Merge'
         ? (mergeNumber ?? junctionNumber)
         : junction.type === 'Split'
           ? (splitNumber ?? junctionNumber)
           : junctionNumber
+    const displayLabel = overrideName || getJunctionDisplayLabel(junction.type, displayNumber)
 
     return {
       ...junction,
+      name: overrideName,
       junctionNumber,
       mergeNumber,
       splitNumber,
       displayNumber,
-      displayLabel: getJunctionDisplayLabel(junction.type, displayNumber),
+      displayLabel,
     }
   })
 }
@@ -1021,7 +1026,7 @@ export function normalizeMapMetadata(map: MapDocument): { fixes: string[] } {
   const beforeCount = map.settings.junctionNumberOverrides.length
   map.settings.junctionNumberOverrides = Array.from(dedupedById.values()).filter((item) => {
     const hasAnyNumber =
-      item.junctionNumber !== undefined || item.mergeNumber !== undefined || item.splitNumber !== undefined
+      item.junctionNumber !== undefined || item.mergeNumber !== undefined || item.splitNumber !== undefined || item.displayName.trim() !== ''
     return hasAnyNumber && validJunctionIds.has(item.junctionId)
   })
 

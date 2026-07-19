@@ -176,9 +176,15 @@
   display: none;
 }
 
-body.is-resizing-panels,
-body.is-resizing-panels * {
+body.is-resizing-panels-horizontal,
+body.is-resizing-panels-horizontal * {
   cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.is-resizing-panels-vertical,
+body.is-resizing-panels-vertical * {
+  cursor: row-resize !important;
   user-select: none !important;
 }
 
@@ -228,20 +234,186 @@ body.is-resizing-panels * {
 }
 
 .grid-panel {
-  display: grid;
-  grid-template-rows: auto 1fr;
+  display: block;
   min-width: 0;
   overflow: hidden;
   background: radial-gradient(circle at top left, #122842, #081019 70%);
 }
 
+.grid-panel-layout {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.grid-panel-middle {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.grid-panel-dock {
+  display: flex;
+  gap: 0.55rem;
+  padding: 0.5rem;
+  min-width: 0;
+  min-height: 0;
+}
+
+.grid-panel-dock:empty {
+  display: none;
+  padding: 0;
+}
+
+.grid-panel-dock-top,
+.grid-panel-dock-bottom {
+  flex-direction: column;
+  border-bottom: 1px solid #2f4360;
+}
+
+.grid-panel-dock-top .grid-docked-panel,
+.grid-panel-dock-bottom .grid-docked-panel {
+  width: 100%;
+}
+
+.grid-panel-dock-bottom {
+  border-bottom: 0;
+  border-top: 1px solid #2f4360;
+}
+
+.grid-panel-dock-left,
+.grid-panel-dock-right {
+  flex-direction: column;
+  border-right: 1px solid #2f4360;
+  overflow: auto;
+}
+
+.grid-panel-dock-left .grid-docked-panel,
+.grid-panel-dock-right .grid-docked-panel {
+  max-width: 100%;
+}
+
+.grid-docked-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+
+.grid-docked-panel > .workspace-toolbar-panel,
+.grid-docked-panel > .workspace-station-strip {
+  width: 100%;
+  height: 100%;
+}
+
+.grid-docked-resizer {
+  position: absolute;
+  z-index: 4;
+  background: linear-gradient(180deg, #1f3350 0%, #182b44 100%);
+  transition: background 140ms ease;
+}
+
+.grid-docked-resizer:hover {
+  background: linear-gradient(180deg, #2d4d76 0%, #244263 100%);
+}
+
+.grid-docked-resizer::after {
+  content: '';
+  position: absolute;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0.9;
+  background:
+    radial-gradient(circle, #dbeafe 1.1px, transparent 1.2px) 0 0 / 5px 5px,
+    rgba(10, 22, 36, 0.52);
+  box-shadow:
+    0 0 0 1px rgba(125, 211, 252, 0.22),
+    0 1px 4px rgba(5, 12, 20, 0.5);
+}
+
+.grid-docked-resizer.edge-left,
+.grid-docked-resizer.edge-right {
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.grid-docked-resizer.edge-left {
+  left: 0;
+}
+
+.grid-docked-resizer.edge-right {
+  right: 0;
+}
+
+.grid-docked-resizer.edge-left::after,
+.grid-docked-resizer.edge-right::after {
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 42px;
+  transform: translate(-50%, -50%);
+}
+
+.grid-docked-resizer.edge-top,
+.grid-docked-resizer.edge-bottom {
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: row-resize;
+}
+
+.grid-docked-resizer.edge-top {
+  top: 0;
+}
+
+.grid-docked-resizer.edge-bottom {
+  bottom: 0;
+}
+
+.grid-docked-resizer.edge-top::after,
+.grid-docked-resizer.edge-bottom::after {
+  top: 50%;
+  left: 50%;
+  width: 42px;
+  height: 4px;
+  transform: translate(-50%, -50%);
+}
+
+.grid-panel-dock-right {
+  border-right: 0;
+  border-left: 1px solid #2f4360;
+}
+
 .panel-header.inline {
   padding: 0.8rem 1rem;
-  border-bottom: 1px solid #2f4360;
+  border: 1px solid #2f4360;
+  border-radius: 0.65rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
+  background: rgba(12, 25, 40, 0.9);
+}
+
+.workspace-toolbar-panel.dock-vertical {
+  min-width: 300px;
+  max-width: 420px;
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.workspace-toolbar-panel.dock-vertical .view-controls {
+  flex-direction: column;
+  align-items: stretch;
+  min-height: 0;
+  overflow: auto;
+}
+
+.workspace-toolbar-panel.dock-horizontal .view-controls {
+  flex-wrap: wrap;
 }
 
 .zoom-control {
@@ -257,6 +429,66 @@ body.is-resizing-panels * {
   gap: 0.8rem;
 }
 
+.display-toggle-toolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid #3f5273;
+  border-radius: 0.55rem;
+  background: rgba(8, 18, 30, 0.8);
+}
+
+.display-toggle-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.74rem;
+  color: #d7e7ff;
+  white-space: nowrap;
+}
+
+.display-toggle-toolbar input {
+  accent-color: #67e8f9;
+}
+
+.history-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.history-toolbar-readout {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.1rem 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid #3f5273;
+  border-radius: 0.55rem;
+  background: rgba(8, 18, 30, 0.9);
+  color: #d7e7ff;
+  font-size: 0.78rem;
+  min-width: 11rem;
+}
+
+.history-toolbar-readout strong {
+  color: #f8fbff;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  justify-self: end;
+}
+
+.history-button {
+  min-width: 4.5rem;
+}
+
+.history-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .fit-button {
   border: 1px solid #3f5273;
   border-radius: 0.55rem;
@@ -264,6 +496,106 @@ body.is-resizing-panels * {
   color: #e8f0ff;
   padding: 0.5rem 0.8rem;
   cursor: pointer;
+}
+
+.workspace-station-strip {
+  border: 1px solid #2f4360;
+  border-radius: 0.65rem;
+  padding: 0.55rem 0.8rem 0.65rem;
+  background: rgba(10, 23, 37, 0.82);
+  display: grid;
+  gap: 0.45rem;
+}
+
+.workspace-station-strip.dock-vertical {
+  min-width: 240px;
+  max-width: 340px;
+}
+
+.workspace-station-strip-title {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #79abff;
+}
+
+.workspace-station-strip-list {
+  display: flex;
+  gap: 0.45rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 0.1rem;
+}
+
+.workspace-station-strip.dock-vertical .workspace-station-strip-list {
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 55vh;
+}
+
+.panel-dock-control {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 7.6rem;
+  font-size: 0.74rem;
+  color: #d4e3ff;
+}
+
+.panel-dock-button-group {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+
+.panel-dock-button {
+  border: 1px solid #3f5273;
+  border-radius: 0.42rem;
+  background: #112136;
+  color: #dbeafe;
+  padding: 0.28rem 0.42rem;
+  min-width: 1.7rem;
+  cursor: pointer;
+}
+
+.panel-dock-button.active {
+  border-color: #7dd3fc;
+  background: #1b3554;
+  color: #ffffff;
+}
+
+.panel-size-control {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 8.5rem;
+  font-size: 0.74rem;
+  color: #d4e3ff;
+}
+
+.panel-size-control input[type='range'] {
+  width: 100%;
+}
+
+.workspace-station-chip {
+  border: 1px solid #3a4f6d;
+  border-radius: 999px;
+  background: #12263f;
+  color: #d7e2ff;
+  padding: 0.35rem 0.7rem;
+  white-space: nowrap;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.workspace-station-chip.active {
+  border-color: #79abff;
+  background: linear-gradient(140deg, #113051 0%, #10494b 100%);
+}
+
+.workspace-station-empty {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #8fa5c8;
 }
 
 .canvas-wrap {

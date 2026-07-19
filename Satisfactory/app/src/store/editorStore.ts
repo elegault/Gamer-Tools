@@ -39,9 +39,89 @@ export type SelectedEntity =
   | null
 
 type SectionEndpointKey = 'endpoint1' | 'endpoint2'
+type SectionEndpointRef = { sectionId: string; endpointKey: SectionEndpointKey }
 type StationSide = 'Left' | 'Right'
-const STATION_CONNECTION_HALF_WIDTH = 86
 const INTERSECTION_ENDPOINT_SNAP_TOLERANCE = 16
+const DEFAULT_HISTORY_LIMIT = 100
+const MAX_HISTORY_LIMIT = 100
+const CONFIGURED_HISTORY_LIMIT = Number(import.meta.env.VITE_EDITOR_HISTORY_LIMIT)
+const HISTORY_LIMIT = Number.isFinite(CONFIGURED_HISTORY_LIMIT)
+  ? Math.max(1, Math.min(MAX_HISTORY_LIMIT, Math.round(CONFIGURED_HISTORY_LIMIT)))
+  : DEFAULT_HISTORY_LIMIT
+
+let pendingHistoryBatch: MapHistorySnapshot | null = null
+
+type MapHistorySnapshot = {
+  map: MapDocument
+  zoom: number
+  selectedEntity: SelectedEntity
+}
+
+function cloneMapDocument(map: MapDocument): MapDocument {
+  return JSON.parse(JSON.stringify(map)) as MapDocument
+}
+
+function captureHistorySnapshot(state: EditorState): MapHistorySnapshot {
+  return {
+    map: cloneMapDocument(state.map),
+    zoom: state.zoom,
+    selectedEntity: state.selectedEntity ? { ...state.selectedEntity } : null,
+  }
+}
+
+function restoreHistorySnapshot(state: EditorState, snapshot: MapHistorySnapshot): void {
+  state.map = cloneMapDocument(snapshot.map)
+  state.zoom = snapshot.zoom
+  state.selectedEntity = snapshot.selectedEntity ? { ...snapshot.selectedEntity } : null
+  state.map.settings.editorState.viewport.zoom = snapshot.zoom
+  state.map.settings.editorState.lastSelected = snapshot.selectedEntity
+    ? {
+        entityType: snapshot.selectedEntity.entityType,
+        id: snapshot.selectedEntity.id,
+      }
+    : null
+}
+
+function pushHistorySnapshot(state: EditorState): void {
+  if (pendingHistoryBatch) {
+    return
+  }
+
+  state.undoStack.push(captureHistorySnapshot(state))
+  if (state.undoStack.length > HISTORY_LIMIT) {
+    state.undoStack.shift()
+  }
+
+  state.redoStack = []
+}
+
+function beginHistoryBatch(state: EditorState): void {
+  pendingHistoryBatch = captureHistorySnapshot(state)
+}
+
+function commitHistoryBatch(state: EditorState): void {
+  if (!pendingHistoryBatch) {
+    return
+  }
+
+  const currentSnapshot = captureHistorySnapshot(state)
+  if (JSON.stringify(pendingHistoryBatch) === JSON.stringify(currentSnapshot)) {
+    pendingHistoryBatch = null
+    return
+  }
+
+  state.undoStack.push(pendingHistoryBatch)
+  if (state.undoStack.length > HISTORY_LIMIT) {
+    state.undoStack.shift()
+  }
+
+  state.redoStack = []
+  pendingHistoryBatch = null
+}
+
+function cancelHistoryBatch(): void {
+  pendingHistoryBatch = null
+}
 
 interface EditorState {
   map: MapDocument
@@ -49,6 +129,8 @@ interface EditorState {
   activeTool: ToolMode
   connectionsLocked: boolean
   selectedEntity: SelectedEntity
+  undoStack: MapHistorySnapshot[]
+  redoStack: MapHistorySnapshot[]
   clearMap: () => void
   loadFromDisk: (raw: string) => { ok: true } | { ok: false; message: string }
   setTool: (tool: ToolMode) => void
@@ -64,6 +146,7 @@ interface EditorState {
     numberType: 'junction' | 'merge' | 'split',
     junctionNumber: number,
   ) => void
+  updateJunctionName: (junctionId: string, name: string) => void
   runConnectionAutoFix: () => number
   exportMap: () => string
   updateStation: (id: string, patch: Partial<TrainStation>) => void
@@ -72,7 +155,10 @@ interface EditorState {
   updateSignal: (id: string, patch: Partial<Signal>) => void
   moveStation: (id: string, x: number, y: number) => void
   moveSection: (id: string, x: number, y: number) => void
+  moveSectionEndpoint: (id: string, endpointKey: SectionEndpointKey, x: number, y: number) => void
   moveIntersection: (id: string, x: number, y: number) => void
+  moveIntersectionArmLength: (id: string, armLength: number) => void
+  moveJunction: (junctionId: string, x: number, y: number, endpointRefs?: SectionEndpointRef[]) => void
   moveSignal: (id: string, x: number, y: number) => void
   relocateSelected: (x: number, y: number) => boolean
   disconnectSectionEndpointStation: (sectionId: string, endpointKey: SectionEndpointKey) => void
@@ -82,6 +168,10 @@ interface EditorState {
     stationId: string,
     side: StationSide,
   ) => boolean
+  beginHistoryBatch: () => void
+  commitHistoryBatch: () => void
+  undo: () => void
+  redo: () => void
   getSectionConnectivityGraph: () => SectionConnectivityGraph
   findSectionPath: (fromSectionNumber: number, toSectionNumber: number) => number[] | null
   deleteSelected: () => void
@@ -225,6 +315,7 @@ function createStation(map: MapDocument, point: Point): TrainStation {
     stationName: `Station ${stationNumber}`,
     stationNumber,
     color: '#c7d2fe',
+    layoutDirection: 'HorizontalMetaRight',
     sectionInNumber: null,
     sectionOutNumber: null,
     inbound: { x: point.x - 40, y: point.y },
@@ -244,12 +335,58 @@ function createStation(map: MapDocument, point: Point): TrainStation {
   }
 }
 
+type ResolvedStationLayout =
+  | 'HorizontalMetaRight'
+  | 'HorizontalMetaLeft'
+  | 'VerticalMetaTop'
+  | 'VerticalMetaBottom'
+
+function resolveStationLayoutDirection(station: TrainStation): ResolvedStationLayout {
+  if (station.layoutDirection === 'Default') {
+    return 'HorizontalMetaRight'
+  }
+
+  if (station.layoutDirection === 'Reversed') {
+    return 'HorizontalMetaLeft'
+  }
+
+  return station.layoutDirection
+}
+
+function getStationDisplayBounds(station: TrainStation): { width: number; height: number } {
+  const slotCount = station.freightStationSequence.length
+  const slotHeight = 14
+  const slotGap = 4
+  const freightPanelWidth = 64
+  const stationMetaPanelWidth = 116
+  const stationMetaPanelHeight = 44
+  const freightPanelHeight = Math.max(32, slotCount * (slotHeight + slotGap) + 8)
+  const panelInset = 4
+  const panelGap = 4
+  const layoutDirection = resolveStationLayoutDirection(station)
+  const isVerticalLayout =
+    layoutDirection === 'VerticalMetaTop' || layoutDirection === 'VerticalMetaBottom'
+  const stationInnerWidth = isVerticalLayout
+    ? Math.max(freightPanelWidth, stationMetaPanelWidth)
+    : freightPanelWidth + panelGap + stationMetaPanelWidth
+  const stationInnerHeight = isVerticalLayout
+    ? stationMetaPanelHeight + panelGap + freightPanelHeight
+    : Math.max(stationMetaPanelHeight, freightPanelHeight)
+
+  return {
+    width: stationInnerWidth + panelInset * 2,
+    height: stationInnerHeight + panelInset * 2,
+  }
+}
+
 function createSection(
   map: MapDocument,
   point: Point,
   sectionKind: RailwaySectionKind,
 ): RailwaySection {
   const sectionNumber = nextSectionNumber(map)
+  const curveBendMin = 0
+  const curveBendMax = sectionKind === 'Curved' ? 480 : 480
   return {
     id: randomId('section'),
     sectionNumber,
@@ -257,6 +394,8 @@ function createSection(
     color: map.settings.defaultSectionColor,
     sectionKind,
     directionMode: 'Bidirectional',
+    curveBendMin,
+    curveBendMax,
     curveBend: 120,
     endpoint1: {
       sectionNumber,
@@ -319,9 +458,49 @@ function withTimestamp(map: MapDocument): MapDocument {
 function getStationSidePoint(station: TrainStation, side: StationSide): Point {
   const anchorX = (station.inbound.x + station.outbound.x) / 2
   const anchorY = (station.inbound.y + station.outbound.y) / 2
+  const layoutDirection = resolveStationLayoutDirection(station)
+  const bounds = getStationDisplayBounds(station)
+
+  if (layoutDirection === 'VerticalMetaTop') {
+    return {
+      x: anchorX,
+      y: side === 'Left' ? anchorY + bounds.height / 2 : anchorY - bounds.height / 2,
+    }
+  }
+
+  if (layoutDirection === 'VerticalMetaBottom') {
+    return {
+      x: anchorX,
+      y: side === 'Left' ? anchorY - bounds.height / 2 : anchorY + bounds.height / 2,
+    }
+  }
+
+  const reverseLayout = layoutDirection === 'HorizontalMetaLeft'
+  const effectiveSide = reverseLayout ? (side === 'Left' ? 'Right' : 'Left') : side
   return {
-    x: side === 'Left' ? anchorX - STATION_CONNECTION_HALF_WIDTH : anchorX + STATION_CONNECTION_HALF_WIDTH,
+    x: effectiveSide === 'Left' ? anchorX - bounds.width / 2 : anchorX + bounds.width / 2,
     y: anchorY,
+  }
+}
+
+function syncStationConnectedEndpointCoordinates(map: MapDocument): void {
+  const stationById = new Map(map.stations.map((station) => [station.id, station]))
+
+  for (const section of map.sections) {
+    for (const endpointKey of ['endpoint1', 'endpoint2'] as SectionEndpointKey[]) {
+      const endpoint = section[endpointKey]
+      const stationConnection = endpoint.stationConnection
+      if (!stationConnection) {
+        continue
+      }
+
+      const station = stationById.get(stationConnection.stationId)
+      if (!station) {
+        continue
+      }
+
+      endpoint.coordinate = getStationSidePoint(station, stationConnection.side)
+    }
   }
 }
 
@@ -410,13 +589,18 @@ export const useEditorStore = create<EditorState>()(
     activeTool: 'select',
     connectionsLocked: false,
     selectedEntity: initialSelectedEntity,
+    undoStack: [],
+    redoStack: [],
 
     clearMap: () => {
+      cancelHistoryBatch()
       set((state) => {
         state.map = createDefaultMap()
         state.selectedEntity = null
         state.activeTool = 'select'
         state.zoom = state.map.settings.editorState.viewport.zoom
+        state.undoStack = []
+        state.redoStack = []
       })
 
       localStorage.removeItem(LOCAL_STORAGE_KEY)
@@ -424,6 +608,7 @@ export const useEditorStore = create<EditorState>()(
 
     loadFromDisk: (raw) => {
       try {
+        cancelHistoryBatch()
         const parsed = parseMapDocument(JSON.parse(raw))
         normalizeMapMetadata(parsed)
         reconcileAllStationOccupancy(parsed)
@@ -439,6 +624,8 @@ export const useEditorStore = create<EditorState>()(
           state.map = parsed
           state.selectedEntity = restoredSelection
           state.zoom = parsed.settings.editorState.viewport.zoom
+          state.undoStack = []
+          state.redoStack = []
         })
         return { ok: true }
       } catch (error) {
@@ -533,6 +720,7 @@ export const useEditorStore = create<EditorState>()(
 
     updateMapTitle: (title) => {
       set((state) => {
+        pushHistorySnapshot(state)
         state.map.settings.title = title
         state.map = withTimestamp(state.map)
       })
@@ -540,6 +728,7 @@ export const useEditorStore = create<EditorState>()(
 
     updateGridSize: (worldWidth, worldHeight) => {
       set((state) => {
+        pushHistorySnapshot(state)
         state.map.settings.worldWidth = Math.max(10, Math.min(10000, Math.round(worldWidth)))
         state.map.settings.worldHeight = Math.max(10, Math.min(10000, Math.round(worldHeight)))
         state.map = withTimestamp(state.map)
@@ -548,6 +737,7 @@ export const useEditorStore = create<EditorState>()(
 
     updateMapSettings: (patch) => {
       set((state) => {
+        pushHistorySnapshot(state)
         Object.assign(state.map.settings, patch)
         state.map = withTimestamp(state.map)
       })
@@ -555,6 +745,7 @@ export const useEditorStore = create<EditorState>()(
 
     updateJunctionNumber: (junctionId, numberType, junctionNumber) => {
       set((state) => {
+        pushHistorySnapshot(state)
         const overrides = state.map.settings.junctionNumberOverrides
         const existing = overrides.find((item) => item.junctionId === junctionId)
 
@@ -583,14 +774,33 @@ export const useEditorStore = create<EditorState>()(
         } else {
           const next: {
             junctionId: string
+            displayName: string
             junctionNumber?: number
             mergeNumber?: number
             splitNumber?: number
           } = {
             junctionId,
+            displayName: '',
           }
           apply(next)
           overrides.push(next)
+        }
+
+        state.map = withTimestamp(state.map)
+      })
+    },
+
+    updateJunctionName: (junctionId, name) => {
+      set((state) => {
+        pushHistorySnapshot(state)
+        const overrides = state.map.settings.junctionNumberOverrides
+        const existing = overrides.find((item) => item.junctionId === junctionId)
+        const displayName = name.trim()
+
+        if (existing) {
+          existing.displayName = displayName
+        } else {
+          overrides.push({ junctionId, displayName })
         }
 
         state.map = withTimestamp(state.map)
@@ -606,6 +816,7 @@ export const useEditorStore = create<EditorState>()(
       let fixCount = 0
 
       set((state) => {
+        pushHistorySnapshot(state)
         const { fixes } = normalizeMapMetadata(state.map)
         fixCount = fixes.length
 
@@ -624,7 +835,15 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        pushHistorySnapshot(state)
+        const shouldRealignEndpoints =
+          patch.layoutDirection !== undefined ||
+          patch.inbound !== undefined ||
+          patch.outbound !== undefined
         Object.assign(station, patch)
+        if (shouldRealignEndpoints) {
+          syncStationConnectedEndpointCoordinates(state.map)
+        }
         state.map = withTimestamp(state.map)
       })
     },
@@ -636,6 +855,7 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        pushHistorySnapshot(state)
         const previousSectionNumber = section.sectionNumber
 
         Object.assign(section, patch)
@@ -671,6 +891,7 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        pushHistorySnapshot(state)
         Object.assign(signal, patch)
         state.map = withTimestamp(state.map)
       })
@@ -683,6 +904,7 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        pushHistorySnapshot(state)
         Object.assign(intersection, patch)
         state.map = withTimestamp(state.map)
       })
@@ -695,18 +917,25 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        pushHistorySnapshot(state)
         const previousInbound = { ...station.inbound }
         const previousOutbound = { ...station.outbound }
-        const previousAnchorX = (previousInbound.x + previousOutbound.x) / 2
-        const previousAnchorY = (previousInbound.y + previousOutbound.y) / 2
-        const previousLeftBorder = {
-          x: previousAnchorX - STATION_CONNECTION_HALF_WIDTH,
-          y: previousAnchorY,
-        }
-        const previousRightBorder = {
-          x: previousAnchorX + STATION_CONNECTION_HALF_WIDTH,
-          y: previousAnchorY,
-        }
+        const previousLeftBorder = getStationSidePoint(
+          {
+            ...station,
+            inbound: previousInbound,
+            outbound: previousOutbound,
+          },
+          'Left',
+        )
+        const previousRightBorder = getStationSidePoint(
+          {
+            ...station,
+            inbound: previousInbound,
+            outbound: previousOutbound,
+          },
+          'Right',
+        )
         const currentX = (station.inbound.x + station.outbound.x) / 2
         const currentY = (station.inbound.y + station.outbound.y) / 2
         const dx = x - currentX
@@ -776,6 +1005,7 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        pushHistorySnapshot(state)
         const current = getSectionMidpoint(section)
         const dx = x - current.x
         const dy = y - current.y
@@ -794,6 +1024,44 @@ export const useEditorStore = create<EditorState>()(
       })
     },
 
+    moveSectionEndpoint: (id, endpointKey, x, y) => {
+      set((state) => {
+        const section = state.map.sections.find((item) => item.id === id)
+        if (!section) {
+          return
+        }
+
+        const endpoint = section[endpointKey]
+        const previousCoordinate = { ...endpoint.coordinate }
+        const dx = x - previousCoordinate.x
+        const dy = y - previousCoordinate.y
+        if (dx === 0 && dy === 0) {
+          return
+        }
+
+        pushHistorySnapshot(state)
+        const previousKey = `${Math.round(previousCoordinate.x)}:${Math.round(previousCoordinate.y)}`
+
+        endpoint.coordinate = shiftPoint(endpoint.coordinate, dx, dy)
+
+        for (const otherSection of state.map.sections) {
+          for (const otherEndpointKey of ['endpoint1', 'endpoint2'] as SectionEndpointKey[]) {
+            const otherEndpoint = otherSection[otherEndpointKey]
+            const otherKey = `${Math.round(otherEndpoint.coordinate.x)}:${Math.round(otherEndpoint.coordinate.y)}`
+            if (otherKey !== previousKey) {
+              continue
+            }
+
+            otherEndpoint.coordinate = shiftPoint(otherEndpoint.coordinate, dx, dy)
+            detachEndpointStationConnectionIfNeeded(state.map, otherSection, otherEndpointKey)
+          }
+        }
+
+        detachEndpointStationConnectionIfNeeded(state.map, section, endpointKey)
+        state.map = withTimestamp(state.map)
+      })
+    },
+
     moveSignal: (id, x, y) => {
       set((state) => {
         const signal = state.map.signals.find((item) => item.id === id)
@@ -801,6 +1069,7 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        pushHistorySnapshot(state)
         signal.coordinate = { x, y }
         state.map = withTimestamp(state.map)
       })
@@ -813,6 +1082,7 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        pushHistorySnapshot(state)
         const previousCenter = { ...intersection.center }
         const dx = x - previousCenter.x
         const dy = y - previousCenter.y
@@ -839,6 +1109,138 @@ export const useEditorStore = create<EditorState>()(
 
             endpoint.coordinate = shiftPoint(endpoint.coordinate, dx, dy)
           }
+        }
+
+        state.map = withTimestamp(state.map)
+      })
+    },
+
+    moveIntersectionArmLength: (id, armLength) => {
+      set((state) => {
+        const intersection = state.map.intersections.find((item) => item.id === id)
+        if (!intersection) {
+          return
+        }
+
+        const nextArmLength = Math.max(40, Math.min(240, Math.round(armLength)))
+        if (nextArmLength === intersection.armLength) {
+          return
+        }
+
+        pushHistorySnapshot(state)
+        const previousPoints = getIntersectionConnectionPoints(intersection)
+        intersection.armLength = nextArmLength
+        const nextPoints = getIntersectionConnectionPoints(intersection)
+
+        for (const section of state.map.sections) {
+          for (const endpointKey of ['endpoint1', 'endpoint2'] as SectionEndpointKey[]) {
+            const endpoint = section[endpointKey]
+            if (endpoint.stationConnection) {
+              continue
+            }
+
+            const matchedIndex = previousPoints.findIndex(
+              (point) => pointDistance(endpoint.coordinate, point) <= INTERSECTION_ENDPOINT_SNAP_TOLERANCE,
+            )
+
+            if (matchedIndex === -1) {
+              continue
+            }
+
+            const previousPoint = previousPoints[matchedIndex]
+            const nextPoint = nextPoints[matchedIndex]
+            endpoint.coordinate = shiftPoint(endpoint.coordinate, nextPoint.x - previousPoint.x, nextPoint.y - previousPoint.y)
+          }
+        }
+
+        state.map = withTimestamp(state.map)
+      })
+    },
+
+    moveJunction: (junctionId, x, y, endpointRefs = []) => {
+      set((state) => {
+        const [xText, yText] = junctionId.split(':')
+        const targetX = Number(xText)
+        const targetY = Number(yText)
+        if (!Number.isFinite(targetX) || !Number.isFinite(targetY)) {
+          return
+        }
+
+        const refs = endpointRefs.length > 0 ? endpointRefs : state.map.sections.flatMap((section) => {
+          const matches: SectionEndpointRef[] = []
+          if (Math.round(section.endpoint1.coordinate.x) === Math.round(targetX) &&
+            Math.round(section.endpoint1.coordinate.y) === Math.round(targetY)) {
+            matches.push({ sectionId: section.id, endpointKey: 'endpoint1' })
+          }
+
+          if (Math.round(section.endpoint2.coordinate.x) === Math.round(targetX) &&
+            Math.round(section.endpoint2.coordinate.y) === Math.round(targetY)) {
+            matches.push({ sectionId: section.id, endpointKey: 'endpoint2' })
+          }
+
+          return matches
+        })
+
+        const endpoints = refs.flatMap((ref) => {
+          const section = state.map.sections.find((item) => item.id === ref.sectionId)
+          if (!section) {
+            return []
+          }
+
+          return [{ section, endpointKey: ref.endpointKey, coordinate: section[ref.endpointKey].coordinate }]
+        })
+
+        if (endpoints.length === 0) {
+          return
+        }
+
+        const currentX = endpoints.reduce((sum, endpoint) => sum + endpoint.coordinate.x, 0) / endpoints.length
+        const currentY = endpoints.reduce((sum, endpoint) => sum + endpoint.coordinate.y, 0) / endpoints.length
+        const dx = x - currentX
+        const dy = y - currentY
+        if (dx === 0 && dy === 0) {
+          return
+        }
+
+        pushHistorySnapshot(state)
+        for (const endpoint of endpoints) {
+          endpoint.section[endpoint.endpointKey].coordinate = shiftPoint(endpoint.coordinate, dx, dy)
+          detachEndpointStationConnectionIfNeeded(state.map, endpoint.section, endpoint.endpointKey)
+        }
+
+        const nextJunctionId = `${Math.round(x)}:${Math.round(y)}`
+        const selectedJunctionId = state.selectedEntity?.entityType === 'junction' ? state.selectedEntity.id : null
+        const previousJunctionIds = [junctionId, selectedJunctionId].filter(
+          (value, index, values): value is string => Boolean(value) && values.indexOf(value) === index,
+        )
+
+        for (const previousJunctionId of previousJunctionIds) {
+          if (previousJunctionId === nextJunctionId) {
+            continue
+          }
+
+          const overrides = state.map.settings.junctionNumberOverrides
+          const sourceIndex = overrides.findIndex((item) => item.junctionId === previousJunctionId)
+          if (sourceIndex === -1) {
+            continue
+          }
+
+          const source = overrides[sourceIndex]
+          const existing = overrides.find((item) => item.junctionId === nextJunctionId)
+          if (existing) {
+            existing.junctionNumber = source.junctionNumber ?? existing.junctionNumber
+            existing.mergeNumber = source.mergeNumber ?? existing.mergeNumber
+            existing.splitNumber = source.splitNumber ?? existing.splitNumber
+            existing.displayName = source.displayName || existing.displayName
+            overrides.splice(sourceIndex, 1)
+          } else {
+            source.junctionId = nextJunctionId
+          }
+        }
+
+        if (state.selectedEntity?.entityType === 'junction' && (previousJunctionIds.includes(state.selectedEntity.id) || endpointRefs.length > 0)) {
+          state.selectedEntity = { entityType: 'junction', id: nextJunctionId }
+          state.map.settings.editorState.lastSelected = { entityType: 'junction', id: nextJunctionId }
         }
 
         state.map = withTimestamp(state.map)
@@ -1071,6 +1473,8 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        pushHistorySnapshot(state)
+
         for (const section of state.map.sections) {
           if (!movedSectionIds.has(section.id)) {
             continue
@@ -1131,8 +1535,16 @@ export const useEditorStore = create<EditorState>()(
 
           for (const station of state.map.stations) {
             const candidates: Array<{ side: StationSide; point: Point; occupiedBy: number | null }> = [
-              { side: 'Left', point: getStationSidePoint(station, 'Left'), occupiedBy: station.sectionInNumber },
-              { side: 'Right', point: getStationSidePoint(station, 'Right'), occupiedBy: station.sectionOutNumber },
+              {
+                side: 'Left',
+                point: getStationSidePoint(station, 'Left'),
+                occupiedBy: station.sectionInNumber,
+              },
+              {
+                side: 'Right',
+                point: getStationSidePoint(station, 'Right'),
+                occupiedBy: station.sectionOutNumber,
+              },
             ]
 
             for (const candidate of candidates) {
@@ -1166,6 +1578,7 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        pushHistorySnapshot(state)
         endpoint.stationConnection = null
 
         const station = state.map.stations.find((item) => item.id === connection.stationId)
@@ -1199,6 +1612,7 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        pushHistorySnapshot(state)
         const previous = endpoint.stationConnection
         endpoint.stationConnection = { stationId, side }
         endpoint.coordinate = getStationSidePoint(station, side)
@@ -1218,6 +1632,52 @@ export const useEditorStore = create<EditorState>()(
       return connected
     },
 
+    beginHistoryBatch: () => {
+      beginHistoryBatch(get())
+    },
+
+    commitHistoryBatch: () => {
+      set((state) => {
+        commitHistoryBatch(state)
+      })
+    },
+
+    undo: () => {
+      cancelHistoryBatch()
+      set((state) => {
+        const snapshot = state.undoStack.pop()
+        if (!snapshot) {
+          return
+        }
+
+        state.redoStack.push(captureHistorySnapshot(state))
+        if (state.redoStack.length > HISTORY_LIMIT) {
+          state.redoStack.shift()
+        }
+
+        restoreHistorySnapshot(state, snapshot)
+        state.map = withTimestamp(state.map)
+      })
+    },
+
+    redo: () => {
+      cancelHistoryBatch()
+      set((state) => {
+        const snapshot = state.redoStack.pop()
+        if (!snapshot) {
+          return
+        }
+
+        state.undoStack.push(captureHistorySnapshot(state))
+        if (state.undoStack.length > HISTORY_LIMIT) {
+          state.undoStack.shift()
+        }
+
+        restoreHistorySnapshot(state, snapshot)
+        state.map = withTimestamp(state.map)
+      })
+    },
+
     getSectionConnectivityGraph: () => {
       const { map } = get()
       return buildSectionConnectivityGraph(map)
@@ -1235,6 +1695,7 @@ export const useEditorStore = create<EditorState>()(
           return
         }
 
+        pushHistorySnapshot(state)
         if (selected.entityType === 'station') {
           const station = state.map.stations.find((item) => item.id === selected.id)
           if (station) {

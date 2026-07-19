@@ -12,6 +12,17 @@ export type FreightStationType = z.infer<typeof freightStationTypeSchema>
 export const freightModeSchema = z.enum(['Load', 'Unload'])
 export type FreightMode = z.infer<typeof freightModeSchema>
 
+export const stationLayoutDirectionSchema = z.enum([
+  'HorizontalMetaRight',
+  'HorizontalMetaLeft',
+  'VerticalMetaTop',
+  'VerticalMetaBottom',
+  // Legacy values retained for backward compatibility with existing saved maps.
+  'Default',
+  'Reversed',
+])
+export type StationLayoutDirection = z.infer<typeof stationLayoutDirectionSchema>
+
 export const railwaySectionKindSchema = z.enum(['Straight', 'Curved'])
 export type RailwaySectionKind = z.infer<typeof railwaySectionKindSchema>
 
@@ -38,6 +49,7 @@ export const trainStationSchema = z.object({
   stationName: z.string().trim().min(1),
   stationNumber: z.number().int().nonnegative(),
   color: z.string().default('#c7d2fe'),
+  layoutDirection: stationLayoutDirectionSchema.default('HorizontalMetaRight'),
   sectionInNumber: z.number().int().nonnegative().nullable(),
   sectionOutNumber: z.number().int().nonnegative().nullable(),
   inbound: pointSchema,
@@ -277,6 +289,7 @@ const junctionNumberOverrideSchema = z.object({
   junctionNumber: z.number().int().nonnegative().optional(),
   mergeNumber: z.number().int().nonnegative().optional(),
   splitNumber: z.number().int().nonnegative().optional(),
+  displayName: z.string().trim().default(''),
 })
 
 const persistedSelectedEntitySchema = z.object({
@@ -296,6 +309,10 @@ const panelStateSchema = z.object({
   inspectorCollapsed: z.boolean().default(false),
   sidebarWidth: z.number().int().min(180).max(720).default(260),
   inspectorWidth: z.number().int().min(260).max(900).default(600),
+  workspacePanelDock: z.enum(['Top', 'Right', 'Bottom', 'Left']).default('Top'),
+  stationSelectorDock: z.enum(['Top', 'Right', 'Bottom', 'Left']).default('Top'),
+  workspacePanelSize: z.number().int().min(140).max(760).default(230),
+  stationSelectorSize: z.number().int().min(120).max(760).default(180),
 })
 
 const inspectorCollapseStateSchema = z.object({
@@ -306,6 +323,13 @@ const inspectorCollapseStateSchema = z.object({
   relocate: z.boolean().default(false),
   totals: z.boolean().default(false),
   legend: z.boolean().default(false),
+})
+
+const displayToggleStateSchema = z.object({
+  showSectionLabels: z.boolean().default(true),
+  showSignalEndpoints: z.boolean().default(true),
+  showDirectionalIndicators: z.boolean().default(true),
+  showValidationIcons: z.boolean().default(true),
 })
 
 const editorStateSchema = z.object({
@@ -321,6 +345,10 @@ const editorStateSchema = z.object({
     inspectorCollapsed: false,
     sidebarWidth: 260,
     inspectorWidth: 600,
+    workspacePanelDock: 'Top',
+    stationSelectorDock: 'Top',
+    workspacePanelSize: 230,
+    stationSelectorSize: 180,
   }),
   inspectorSections: inspectorCollapseStateSchema.default({
     mapUi: false,
@@ -330,6 +358,12 @@ const editorStateSchema = z.object({
     relocate: false,
     totals: false,
     legend: false,
+  }),
+  displayToggles: displayToggleStateSchema.default({
+    showSectionLabels: true,
+    showSignalEndpoints: true,
+    showDirectionalIndicators: true,
+    showValidationIcons: true,
   }),
 })
 
@@ -342,6 +376,8 @@ export const railwaySectionSchema = z.object({
   color: z.string().default('#da0fec'),
   sectionKind: railwaySectionKindSchema.default('Straight'),
   directionMode: sectionDirectionSchema.default('Bidirectional'),
+  curveBendMin: z.number().min(0).max(1000).default(0),
+  curveBendMax: z.number().min(0).max(1000).default(480),
   curveBend: z.number().min(-1000).max(1000).default(120),
   endpoint1: endpointSchema,
   endpoint2: endpointSchema,
@@ -385,6 +421,10 @@ export const mapSettingsSchema = z.object({
       inspectorCollapsed: false,
       sidebarWidth: 260,
       inspectorWidth: 600,
+      workspacePanelDock: 'Top',
+      stationSelectorDock: 'Top',
+      workspacePanelSize: 230,
+      stationSelectorSize: 180,
     },
     inspectorSections: {
       mapUi: false,
@@ -394,6 +434,12 @@ export const mapSettingsSchema = z.object({
       relocate: false,
       totals: false,
       legend: false,
+    },
+    displayToggles: {
+      showSectionLabels: true,
+      showSignalEndpoints: true,
+      showDirectionalIndicators: true,
+      showValidationIcons: true,
     },
   }),
   labelStyles: labelStylesSchema.default({

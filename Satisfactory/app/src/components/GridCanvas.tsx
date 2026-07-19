@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type JSX, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
 import { Circle, Group, Layer, Line, Rect, Stage, Text } from 'react-konva'
 import type Konva from 'konva'
 import type { MapDocument } from '../models/mapSchema'
 import { buildConnectionReview, buildJunctionMetadata } from '../models/connectionReview'
+import { HistoryToolbar } from './HistoryToolbar'
 import { useEditorStore } from '../store/editorStore'
 
 type Size = {
@@ -53,10 +54,35 @@ function distance(a: { x: number; y: number }, b: { x: number; y: number }): num
   return Math.sqrt(dx * dx + dy * dy)
 }
 
-function getCurveBendLimits(chordLength: number): { min: number; max: number } {
-  const min = Math.max(30, Math.round(chordLength * 0.12))
-  const max = Math.min(480, Math.round(chordLength * 0.85))
+type DragTarget =
+  | { kind: 'section'; id: string }
+  | { kind: 'section-endpoint'; id: string; endpointKey: SectionEndpointKey }
+  | { kind: 'station'; id: string }
+  | { kind: 'intersection'; id: string }
+  | { kind: 'signal'; id: string }
+  | { kind: 'junction'; id: string; endpointRefs: Array<{ sectionId: string; endpointKey: SectionEndpointKey }> }
+  | null
+
+type CoordinateLabel = {
+  key: string
+  x: number
+  y: number
+  text: string
+}
+function getCurveBendLimits(section: MapDocument['sections'][number], chordLength: number): { min: number; max: number } {
+  const min = Math.max(0, Math.round(section.curveBendMin))
+  const fallbackMax = Math.round(chordLength * 0.85)
+  const max = Math.max(min, Math.min(1000, Math.round(section.curveBendMax ?? fallbackMax)))
   return { min, max }
+}
+
+function renderCoordinateLabel(text: string): JSX.Element {
+  return (
+    <Group listening={false}>
+      <Rect x={-34} y={-12} width={68} height={24} cornerRadius={6} fill="#09111d" stroke="#67e8f9" strokeWidth={1} />
+      <Text x={-30} y={-6} width={60} height={12} align="center" text={text} fontSize={8} fill="#e2f3ff" />
+    </Group>
+  )
 }
 
 function getStationOutboundArrow(station: MapDocument['stations'][number]): string {
@@ -70,7 +96,102 @@ function getStationOutboundArrow(station: MapDocument['stations'][number]): stri
   return dy >= 0 ? 'v' : '^'
 }
 
-const STATION_CONNECTION_HALF_WIDTH = 86
+type ResolvedStationLayout =
+  | 'HorizontalMetaRight'
+  | 'HorizontalMetaLeft'
+  | 'VerticalMetaTop'
+  | 'VerticalMetaBottom'
+
+type StationDisplayMetrics = {
+  layoutDirection: ResolvedStationLayout
+  isVerticalLayout: boolean
+  stationMetaOnStart: boolean
+  stationWidth: number
+  stationHeight: number
+  stationLeftX: number
+  stationTopY: number
+  stationMetaPanelWidth: number
+  stationMetaPanelHeight: number
+  stationMetaPanelX: number
+  stationMetaPanelY: number
+  freightPanelWidth: number
+  freightPanelHeight: number
+  freightPanelX: number
+  freightPanelY: number
+}
+
+function resolveStationLayoutDirection(
+  station: MapDocument['stations'][number],
+): ResolvedStationLayout {
+  if (station.layoutDirection === 'Default') {
+    return 'HorizontalMetaRight'
+  }
+
+  if (station.layoutDirection === 'Reversed') {
+    return 'HorizontalMetaLeft'
+  }
+
+  return station.layoutDirection
+}
+
+function getStationDisplayMetrics(
+  station: MapDocument['stations'][number],
+): StationDisplayMetrics {
+  const slotCount = station.freightStationSequence.length
+  const slotHeight = 14
+  const slotGap = 4
+  const freightPanelWidth = 64
+  const stationMetaPanelWidth = 116
+  const stationMetaPanelHeight = 44
+  const freightPanelHeight = Math.max(32, slotCount * (slotHeight + slotGap) + 8)
+  const panelInset = 4
+  const panelGap = 4
+  const layoutDirection = resolveStationLayoutDirection(station)
+  const isVerticalLayout =
+    layoutDirection === 'VerticalMetaTop' || layoutDirection === 'VerticalMetaBottom'
+  const stationMetaOnStart =
+    layoutDirection === 'HorizontalMetaLeft' || layoutDirection === 'VerticalMetaTop'
+  const stationInnerWidth = isVerticalLayout
+    ? Math.max(freightPanelWidth, stationMetaPanelWidth)
+    : freightPanelWidth + panelGap + stationMetaPanelWidth
+  const stationInnerHeight = isVerticalLayout
+    ? stationMetaPanelHeight + panelGap + freightPanelHeight
+    : Math.max(stationMetaPanelHeight, freightPanelHeight)
+  const stationWidth = stationInnerWidth + panelInset * 2
+  const stationHeight = stationInnerHeight + panelInset * 2
+  const stationLeftX = -stationWidth / 2
+  const stationTopY = -stationHeight / 2
+  const stationMetaPanelX = isVerticalLayout
+    ? stationLeftX + panelInset + (stationInnerWidth - stationMetaPanelWidth) / 2
+    : stationLeftX + panelInset + (stationMetaOnStart ? 0 : freightPanelWidth + panelGap)
+  const stationMetaPanelY = isVerticalLayout
+    ? stationTopY + panelInset + (stationMetaOnStart ? 0 : freightPanelHeight + panelGap)
+    : stationTopY + panelInset + (stationInnerHeight - stationMetaPanelHeight) / 2
+  const freightPanelX = isVerticalLayout
+    ? stationLeftX + panelInset + (stationInnerWidth - freightPanelWidth) / 2
+    : stationLeftX + panelInset + (stationMetaOnStart ? stationMetaPanelWidth + panelGap : 0)
+  const freightPanelY = isVerticalLayout
+    ? stationTopY + panelInset + (stationMetaOnStart ? stationMetaPanelHeight + panelGap : 0)
+    : stationTopY + panelInset + (stationInnerHeight - freightPanelHeight) / 2
+
+  return {
+    layoutDirection,
+    isVerticalLayout,
+    stationMetaOnStart,
+    stationWidth,
+    stationHeight,
+    stationLeftX,
+    stationTopY,
+    stationMetaPanelWidth,
+    stationMetaPanelHeight,
+    stationMetaPanelX,
+    stationMetaPanelY,
+    freightPanelWidth,
+    freightPanelHeight,
+    freightPanelX,
+    freightPanelY,
+  }
+}
 
 function getStationConnectionPoint(
   station: MapDocument['stations'][number],
@@ -78,8 +199,26 @@ function getStationConnectionPoint(
 ): { x: number; y: number } {
   const anchorX = (station.inbound.x + station.outbound.x) / 2
   const anchorY = (station.inbound.y + station.outbound.y) / 2
+  const { layoutDirection, stationWidth, stationHeight } = getStationDisplayMetrics(station)
+
+  if (layoutDirection === 'VerticalMetaTop') {
+    return {
+      x: anchorX,
+      y: side === 'Left' ? anchorY + stationHeight / 2 : anchorY - stationHeight / 2,
+    }
+  }
+
+  if (layoutDirection === 'VerticalMetaBottom') {
+    return {
+      x: anchorX,
+      y: side === 'Left' ? anchorY - stationHeight / 2 : anchorY + stationHeight / 2,
+    }
+  }
+
+  const reverseLayout = layoutDirection === 'HorizontalMetaLeft'
+  const effectiveSide = reverseLayout ? (side === 'Left' ? 'Right' : 'Left') : side
   return {
-    x: side === 'Left' ? anchorX - STATION_CONNECTION_HALF_WIDTH : anchorX + STATION_CONNECTION_HALF_WIDTH,
+    x: effectiveSide === 'Left' ? anchorX - stationWidth / 2 : anchorX + stationWidth / 2,
     y: anchorY,
   }
 }
@@ -444,6 +583,108 @@ function getContentBounds(map: MapDocument): {
   }
 }
 
+type BoundsRect = {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  width: number
+  height: number
+}
+
+type DockSide = 'Top' | 'Right' | 'Bottom' | 'Left'
+
+type DockPanelSizeKey = 'workspacePanelSize' | 'stationSelectorSize'
+
+function isVerticalDockSide(side: DockSide): boolean {
+  return side === 'Left' || side === 'Right'
+}
+
+function createBoundsRect(minX: number, maxX: number, minY: number, maxY: number): BoundsRect {
+  return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    width: Math.max(1, maxX - minX),
+    height: Math.max(1, maxY - minY),
+  }
+}
+
+function getPlacedEntityBounds(map: MapDocument, padding = 40): BoundsRect | null {
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  let hasEntities = false
+
+  const includePoint = (x: number, y: number): void => {
+    minX = Math.min(minX, x)
+    minY = Math.min(minY, y)
+    maxX = Math.max(maxX, x)
+    maxY = Math.max(maxY, y)
+    hasEntities = true
+  }
+
+  const includeRect = (x: number, y: number, width: number, height: number): void => {
+    includePoint(x, y)
+    includePoint(x + width, y + height)
+  }
+
+  for (const station of map.stations) {
+    const metrics = getStationDisplayMetrics(station)
+    const anchorX = (station.inbound.x + station.outbound.x) / 2
+    const anchorY = (station.inbound.y + station.outbound.y) / 2
+    includeRect(
+      anchorX + metrics.stationLeftX,
+      anchorY + metrics.stationTopY,
+      metrics.stationWidth,
+      metrics.stationHeight,
+    )
+  }
+
+  for (const section of map.sections) {
+    includePoint(section.endpoint1.coordinate.x, section.endpoint1.coordinate.y)
+    includePoint(section.endpoint2.coordinate.x, section.endpoint2.coordinate.y)
+    if (section.sectionKind === 'Curved') {
+      const midpointX = (section.endpoint1.coordinate.x + section.endpoint2.coordinate.x) / 2
+      const midpointY = (section.endpoint1.coordinate.y + section.endpoint2.coordinate.y) / 2
+      const chordX = section.endpoint2.coordinate.x - section.endpoint1.coordinate.x
+      const chordY = section.endpoint2.coordinate.y - section.endpoint1.coordinate.y
+      const chordLength = Math.max(1, Math.sqrt(chordX * chordX + chordY * chordY))
+      const normalX = -chordY / chordLength
+      const normalY = chordX / chordLength
+      includePoint(midpointX + normalX * section.curveBend, midpointY + normalY * section.curveBend)
+    }
+  }
+
+  for (const intersection of map.intersections) {
+    const arm = Math.max(40, intersection.armLength)
+    includeRect(intersection.center.x - arm, intersection.center.y - arm, arm * 2, arm * 2)
+  }
+
+  for (const signal of map.signals) {
+    includeRect(signal.coordinate.x - 10, signal.coordinate.y - 10, 20, 20)
+  }
+
+  if (!hasEntities) {
+    return null
+  }
+
+  return createBoundsRect(minX - padding, maxX + padding, minY - padding, maxY + padding)
+}
+
+function parseJunctionCoordinate(junctionId: string): { x: number; y: number } | null {
+  const [xText, yText] = junctionId.split(':')
+  const x = Number(xText)
+  const y = Number(yText)
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null
+  }
+
+  return { x, y }
+}
+
 export function GridCanvas(): JSX.Element {
   const map = useEditorStore((state) => state.map)
   const zoom = useEditorStore((state) => state.zoom)
@@ -458,6 +699,9 @@ export function GridCanvas(): JSX.Element {
   const moveSignal = useEditorStore((state) => state.moveSignal)
   const updateSection = useEditorStore((state) => state.updateSection)
   const connectionsLocked = useEditorStore((state) => state.connectionsLocked)
+  const beginHistoryBatch = useEditorStore((state) => state.beginHistoryBatch)
+  const commitHistoryBatch = useEditorStore((state) => state.commitHistoryBatch)
+  const moveJunction = useEditorStore((state) => state.moveJunction)
   const disconnectSectionEndpointStation = useEditorStore((state) => state.disconnectSectionEndpointStation)
   const connectSectionEndpointToStation = useEditorStore((state) => state.connectSectionEndpointToStation)
   const updateMapSettings = useEditorStore((state) => state.updateMapSettings)
@@ -479,6 +723,8 @@ export function GridCanvas(): JSX.Element {
     y: number
     occupied: boolean
   } | null>(null)
+  const [cursorWorldPosition, setCursorWorldPosition] = useState<{ x: number; y: number } | null>(null)
+  const [dragTarget, setDragTarget] = useState<DragTarget>(null)
   const previousStationSideOccupancyRef = useRef<Record<string, boolean>>({})
   const [flashingStationSides, setFlashingStationSides] = useState<Record<string, boolean>>({})
   const [draggedIntersectionId, setDraggedIntersectionId] = useState<string | null>(null)
@@ -490,6 +736,7 @@ export function GridCanvas(): JSX.Element {
   const panStartPointerRef = useRef<{ x: number; y: number } | null>(null)
   const panStartOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const panDidMoveRef = useRef(false)
+  const isSpacePanActiveRef = useRef(false)
   const endpointDragStateRef = useRef<
     Partial<
       Record<
@@ -504,9 +751,29 @@ export function GridCanvas(): JSX.Element {
       >
     >
   >({})
+  const dockPanelResizeRef = useRef<
+    | {
+        key: DockPanelSizeKey
+        dockSide: DockSide
+        startPointer: number
+        startSize: number
+      }
+    | null
+  >(null)
 
   const contentBounds = useMemo(() => getContentBounds(map), [map])
   const connectionReview = useMemo(() => buildConnectionReview(map), [map])
+  const displayToggles = map.settings.editorState.displayToggles
+  const showSectionLabels = displayToggles.showSectionLabels
+  const showSignalEndpoints = displayToggles.showSignalEndpoints
+  const showDirectionalIndicators = displayToggles.showDirectionalIndicators
+  const showValidationIcons = displayToggles.showValidationIcons
+  const workspacePanelDock = (map.settings.editorState.panels.workspacePanelDock ?? 'Top') as DockSide
+  const stationSelectorDock = (map.settings.editorState.panels.stationSelectorDock ?? 'Top') as DockSide
+  const workspacePanelSize = map.settings.editorState.panels.workspacePanelSize ?? 230
+  const stationSelectorSize = map.settings.editorState.panels.stationSelectorSize ?? 180
+  const workspacePanelVertical = isVerticalDockSide(workspacePanelDock)
+  const stationSelectorVertical = isVerticalDockSide(stationSelectorDock)
   const sectionLabelStyle = map.settings.labelStyles.section
   const intersectionLabelStyle = map.settings.labelStyles.intersection
   const worldMinX = contentBounds.minX
@@ -597,6 +864,100 @@ export function GridCanvas(): JSX.Element {
     return map.signals.find((signal) => signal.id === selectedEntity.id) ?? null
   }, [map.signals, selectedEntity])
 
+  const orderedStations = useMemo(
+    () => [...map.stations].sort((a, b) => a.stationNumber - b.stationNumber),
+    [map.stations],
+  )
+
+  const selectedEntityBounds = useMemo<BoundsRect | null>(() => {
+    if (!selectedEntity) {
+      return null
+    }
+
+    if (selectedEntity.entityType === 'station') {
+      const station = map.stations.find((item) => item.id === selectedEntity.id)
+      if (!station) {
+        return null
+      }
+
+      const metrics = getStationDisplayMetrics(station)
+      const anchorX = (station.inbound.x + station.outbound.x) / 2
+      const anchorY = (station.inbound.y + station.outbound.y) / 2
+      return createBoundsRect(
+        anchorX + metrics.stationLeftX - 24,
+        anchorX + metrics.stationLeftX + metrics.stationWidth + 24,
+        anchorY + metrics.stationTopY - 24,
+        anchorY + metrics.stationTopY + metrics.stationHeight + 24,
+      )
+    }
+
+    if (selectedEntity.entityType === 'section') {
+      const section = map.sections.find((item) => item.id === selectedEntity.id)
+      if (!section) {
+        return null
+      }
+
+      let minX = Math.min(section.endpoint1.coordinate.x, section.endpoint2.coordinate.x)
+      let maxX = Math.max(section.endpoint1.coordinate.x, section.endpoint2.coordinate.x)
+      let minY = Math.min(section.endpoint1.coordinate.y, section.endpoint2.coordinate.y)
+      let maxY = Math.max(section.endpoint1.coordinate.y, section.endpoint2.coordinate.y)
+
+      if (section.sectionKind === 'Curved') {
+        const midpointX = (section.endpoint1.coordinate.x + section.endpoint2.coordinate.x) / 2
+        const midpointY = (section.endpoint1.coordinate.y + section.endpoint2.coordinate.y) / 2
+        const chordX = section.endpoint2.coordinate.x - section.endpoint1.coordinate.x
+        const chordY = section.endpoint2.coordinate.y - section.endpoint1.coordinate.y
+        const chordLength = Math.max(1, Math.sqrt(chordX * chordX + chordY * chordY))
+        const normalX = -chordY / chordLength
+        const normalY = chordX / chordLength
+        const controlX = midpointX + normalX * section.curveBend
+        const controlY = midpointY + normalY * section.curveBend
+        minX = Math.min(minX, controlX)
+        maxX = Math.max(maxX, controlX)
+        minY = Math.min(minY, controlY)
+        maxY = Math.max(maxY, controlY)
+      }
+
+      return createBoundsRect(minX - 30, maxX + 30, minY - 30, maxY + 30)
+    }
+
+    if (selectedEntity.entityType === 'intersection') {
+      const intersection = map.intersections.find((item) => item.id === selectedEntity.id)
+      if (!intersection) {
+        return null
+      }
+
+      const arm = Math.max(40, intersection.armLength)
+      return createBoundsRect(
+        intersection.center.x - arm - 24,
+        intersection.center.x + arm + 24,
+        intersection.center.y - arm - 24,
+        intersection.center.y + arm + 24,
+      )
+    }
+
+    if (selectedEntity.entityType === 'signal') {
+      const signal = map.signals.find((item) => item.id === selectedEntity.id)
+      if (!signal) {
+        return null
+      }
+
+      return createBoundsRect(
+        signal.coordinate.x - 24,
+        signal.coordinate.x + 24,
+        signal.coordinate.y - 24,
+        signal.coordinate.y + 24,
+      )
+    }
+
+    const junction = parseJunctionCoordinate(selectedEntity.id)
+    if (!junction) {
+      return null
+    }
+
+    return createBoundsRect(junction.x - 28, junction.x + 28, junction.y - 28, junction.y + 28)
+  }, [map.intersections, map.sections, map.signals, map.stations, selectedEntity])
+
   const sectionEndpointGroups = useMemo(() => {
     const grouped: Record<string, Array<{ sectionId: string; endpointKey: SectionEndpointKey; entranceMode: 'Allowed' | 'Blocked' }>> = {}
 
@@ -683,6 +1044,136 @@ export function GridCanvas(): JSX.Element {
     return lookup
   }, [signalSocketPoints])
 
+  const repositionCoordinateLabels = useMemo<CoordinateLabel[]>(() => {
+    if (!dragTarget) {
+      return []
+    }
+
+    const labels: CoordinateLabel[] = []
+    const seen = new Set<string>()
+
+    const pushLabel = (key: string, x: number, y: number): void => {
+      if (seen.has(key)) {
+        return
+      }
+
+      seen.add(key)
+      labels.push({
+        key,
+        x,
+        y,
+        text: `${Math.round(x)}, ${Math.round(y)}`,
+      })
+    }
+
+    const addClusterLabels = (coordinate: { x: number; y: number }): void => {
+      const clusterKey = `${Math.round(coordinate.x)}:${Math.round(coordinate.y)}`
+      const entries = sectionEndpointGroups[clusterKey] ?? []
+      const angleStep = entries.length > 0 ? (Math.PI * 2) / entries.length : 0
+
+      entries.forEach((entry, index) => {
+        const section = map.sections.find((item) => item.id === entry.sectionId)
+        if (!section) {
+          return
+        }
+
+        const endpoint = entry.endpointKey === 'endpoint1' ? section.endpoint1.coordinate : section.endpoint2.coordinate
+        const angle = index * angleStep
+        const offset = 22
+        pushLabel(
+          `${entry.sectionId}:${entry.endpointKey}`,
+          endpoint.x + Math.cos(angle) * offset,
+          endpoint.y + Math.sin(angle) * offset,
+        )
+      })
+    }
+
+    if (dragTarget.kind === 'section') {
+      const section = map.sections.find((item) => item.id === dragTarget.id)
+      if (section) {
+        addClusterLabels(section.endpoint1.coordinate)
+        addClusterLabels(section.endpoint2.coordinate)
+      }
+      return labels
+    }
+
+    if (dragTarget.kind === 'section-endpoint') {
+      const section = map.sections.find((item) => item.id === dragTarget.id)
+      if (section) {
+        const endpoint = dragTarget.endpointKey === 'endpoint1' ? section.endpoint1.coordinate : section.endpoint2.coordinate
+        addClusterLabels(endpoint)
+      }
+      return labels
+    }
+
+    if (dragTarget.kind === 'station') {
+      for (const section of map.sections) {
+        for (const endpointKey of ['endpoint1', 'endpoint2'] as SectionEndpointKey[]) {
+          const endpoint = section[endpointKey]
+          if (endpoint.stationConnection?.stationId !== dragTarget.id) {
+            continue
+          }
+
+          pushLabel(
+            `${section.id}:${endpointKey}`,
+            endpoint.coordinate.x,
+            endpoint.coordinate.y,
+          )
+        }
+      }
+      return labels
+    }
+
+    if (dragTarget.kind === 'intersection') {
+      const intersection = map.intersections.find((item) => item.id === dragTarget.id)
+      if (!intersection) {
+        return labels
+      }
+
+      const points = getIntersectionConnectionPoints(intersection)
+      for (const section of map.sections) {
+        for (const endpointKey of ['endpoint1', 'endpoint2'] as SectionEndpointKey[]) {
+          const endpoint = section[endpointKey]
+          const matches = points.some((point) => distance(endpoint.coordinate, point) <= 16)
+          if (!matches) {
+            continue
+          }
+
+          pushLabel(
+            `${section.id}:${endpointKey}`,
+            endpoint.coordinate.x,
+            endpoint.coordinate.y,
+          )
+        }
+      }
+
+      return labels
+    }
+
+    if (dragTarget.kind === 'junction') {
+      dragTarget.endpointRefs.forEach((ref, index) => {
+        const section = map.sections.find((item) => item.id === ref.sectionId)
+        if (!section) {
+          return
+        }
+
+        const endpoint = section[ref.endpointKey].coordinate
+        const angle = dragTarget.endpointRefs.length > 0 ? index * ((Math.PI * 2) / dragTarget.endpointRefs.length) : 0
+        pushLabel(
+          `${ref.sectionId}:${ref.endpointKey}`,
+          endpoint.x + Math.cos(angle) * 22,
+          endpoint.y + Math.sin(angle) * 22,
+        )
+      })
+
+      return labels
+    }
+
+    return labels
+  }, [dragTarget, map.intersections, map.sections, sectionEndpointGroups])
+
+  const isRepositioning = dragTarget !== null || Boolean(draggedIntersectionId)
+
   const junctionIndicators = useMemo(() => {
     const junctionMeta = buildJunctionMetadata(map)
     const indicators: Array<{
@@ -690,16 +1181,22 @@ export function GridCanvas(): JSX.Element {
       x: number
       y: number
       type: 'Merge' | 'Split' | 'Junction' | 'Invalid'
+      name: string
       displayLabel: string
       displayNumber: number
       mergeDirectionRadians: number | null
+      connectedSectionNumbers: number[]
+      connectedEndpoints: Array<{ sectionId: string; endpointKey: SectionEndpointKey }>
     }> = []
 
     for (const junction of junctionMeta) {
+      const connectedEndpoints = (sectionEndpointGroups[junction.id] ?? []).map((entry) => ({
+        sectionId: entry.sectionId,
+        endpointKey: entry.endpointKey,
+      }))
       let mergeDirectionRadians: number | null = null
       if (junction.type === 'Merge') {
-        const entries = sectionEndpointGroups[junction.id] ?? []
-        const allowedEntry = entries.find((entry) => entry.entranceMode === 'Allowed')
+        const allowedEntry = (sectionEndpointGroups[junction.id] ?? []).find((entry) => entry.entranceMode === 'Allowed')
         if (allowedEntry) {
           const allowedSection = map.sections.find((section) => section.id === allowedEntry.sectionId)
           if (allowedSection) {
@@ -717,14 +1214,18 @@ export function GridCanvas(): JSX.Element {
         x: junction.x,
         y: junction.y,
         type: junction.type,
+        name: junction.name,
         displayLabel: junction.displayLabel,
         displayNumber: junction.displayNumber,
         mergeDirectionRadians,
+        connectedSectionNumbers: junction.connectedSectionNumbers,
+        connectedEndpoints,
       })
     }
 
+
     return indicators
-  }, [map, map.sections, sectionEndpointGroups])
+  }, [map, sectionEndpointGroups])
 
   const highlightedIntersectionEndpointKeys = useMemo(() => {
     if (!draggedIntersectionId) {
@@ -783,11 +1284,55 @@ export function GridCanvas(): JSX.Element {
     return occupancy
   }, [map.sections, map.stations])
 
-  function fitToViewport(): void {
+  function fitBounds(bounds: BoundsRect): void {
     const availableWidth = Math.max(320, size.width - worldOffsetX * 2)
     const availableHeight = Math.max(320, size.height - worldOffsetY * 2)
-    const fitScale = Math.min(availableWidth / worldWidth, availableHeight / worldHeight)
-    setZoom(Math.max(0.1, Math.min(2.5, fitScale)))
+    const fitScale = Math.min(availableWidth / bounds.width, availableHeight / bounds.height)
+    const nextZoom = Math.max(0.1, Math.min(2.5, fitScale))
+    const centerX = (bounds.minX + bounds.maxX) / 2
+    const centerY = (bounds.minY + bounds.maxY) / 2
+    const nextPanOffset = {
+      x: size.width / 2 - worldOffsetX + worldMinX * nextZoom - centerX * nextZoom,
+      y: size.height / 2 - worldOffsetY + worldMinY * nextZoom - centerY * nextZoom,
+    }
+
+    setZoom(nextZoom)
+    setPanOffset(nextPanOffset)
+    persistPanOffset(nextPanOffset)
+  }
+
+  function fitToViewport(): void {
+    const componentBounds = getPlacedEntityBounds(map)
+    if (!componentBounds) {
+      fitBounds(contentBounds)
+      return
+    }
+
+    fitBounds(componentBounds)
+  }
+
+  function fitToSelection(): void {
+    if (!selectedEntityBounds) {
+      return
+    }
+
+    fitBounds(selectedEntityBounds)
+  }
+
+  function centerOnStation(station: MapDocument['stations'][number]): void {
+    const stationCenter = {
+      x: (station.inbound.x + station.outbound.x) / 2,
+      y: (station.inbound.y + station.outbound.y) / 2,
+    }
+
+    const nextPanOffset = {
+      x: size.width / 2 - worldOffsetX + worldMinX * zoom - stationCenter.x * zoom,
+      y: size.height / 2 - worldOffsetY + worldMinY * zoom - stationCenter.y * zoom,
+    }
+
+    setPanOffset(nextPanOffset)
+    persistPanOffset(nextPanOffset)
+    selectEntity({ entityType: 'station', id: station.id })
   }
 
   useEffect(() => {
@@ -827,6 +1372,33 @@ export function GridCanvas(): JSX.Element {
     worldWidth,
   ])
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.code === 'Space') {
+        isSpacePanActiveRef.current = true
+      }
+    }
+
+    const handleKeyUp = (event: KeyboardEvent): void => {
+      if (event.code === 'Space') {
+        isSpacePanActiveRef.current = false
+      }
+    }
+
+    const handleWindowBlur = (): void => {
+      isSpacePanActiveRef.current = false
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleWindowBlur)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleWindowBlur)
+    }
+  }, [])
+
   function persistPanOffset(nextPanOffset: { x: number; y: number }): void {
     updateMapSettings({
       editorState: {
@@ -838,6 +1410,169 @@ export function GridCanvas(): JSX.Element {
         },
       },
     })
+  }
+
+  function updateDisplayToggle(
+    key: 'showSectionLabels' | 'showSignalEndpoints' | 'showDirectionalIndicators' | 'showValidationIcons',
+    value: boolean,
+  ): void {
+    updateMapSettings({
+      editorState: {
+        ...map.settings.editorState,
+        displayToggles: {
+          ...map.settings.editorState.displayToggles,
+          [key]: value,
+        },
+      },
+    })
+  }
+
+  function updatePanelDock(key: 'workspacePanelDock' | 'stationSelectorDock', value: DockSide): void {
+    updateMapSettings({
+      editorState: {
+        ...map.settings.editorState,
+        panels: {
+          ...map.settings.editorState.panels,
+          [key]: value,
+        },
+      },
+    })
+  }
+
+  function getPanelSizeBounds(key: DockPanelSizeKey): { min: number; max: number } {
+    if (key === 'workspacePanelSize') {
+      return { min: 140, max: 760 }
+    }
+
+    return { min: 120, max: 760 }
+  }
+
+  function updatePanelSize(key: DockPanelSizeKey, value: number): void {
+    const bounds = getPanelSizeBounds(key)
+    const clampedValue = Math.max(bounds.min, Math.min(bounds.max, Math.round(value)))
+    updateMapSettings({
+      editorState: {
+        ...map.settings.editorState,
+        panels: {
+          ...map.settings.editorState.panels,
+          [key]: clampedValue,
+        },
+      },
+    })
+  }
+
+  function getDockPanelStyle(side: DockSide, size: number): CSSProperties {
+    if (isVerticalDockSide(side)) {
+      return {
+        width: `${size}px`,
+      }
+    }
+
+    return {
+      height: `${size}px`,
+    }
+  }
+
+  function beginDockPanelResize(
+    key: DockPanelSizeKey,
+    dockSide: DockSide,
+    event: ReactMouseEvent<HTMLDivElement>,
+  ): void {
+    event.preventDefault()
+    event.stopPropagation()
+
+    const startPointer = isVerticalDockSide(dockSide) ? event.clientX : event.clientY
+    const startSize = key === 'workspacePanelSize' ? workspacePanelSize : stationSelectorSize
+
+    dockPanelResizeRef.current = {
+      key,
+      dockSide,
+      startPointer,
+      startSize,
+    }
+
+    document.body.classList.add('is-resizing-panels')
+    if (isVerticalDockSide(dockSide)) {
+      document.body.classList.add('is-resizing-panels-horizontal')
+    } else {
+      document.body.classList.add('is-resizing-panels-vertical')
+    }
+  }
+
+  useEffect(() => {
+    function handleMouseMove(event: MouseEvent): void {
+      const resizeState = dockPanelResizeRef.current
+      if (!resizeState) {
+        return
+      }
+
+      const pointer = isVerticalDockSide(resizeState.dockSide) ? event.clientX : event.clientY
+      const delta = pointer - resizeState.startPointer
+      const signedDelta =
+        resizeState.dockSide === 'Right' || resizeState.dockSide === 'Bottom'
+          ? -delta
+          : delta
+
+      updatePanelSize(resizeState.key, resizeState.startSize + signedDelta)
+    }
+
+    function handleMouseUp(): void {
+      if (!dockPanelResizeRef.current) {
+        return
+      }
+
+      dockPanelResizeRef.current = null
+      document.body.classList.remove('is-resizing-panels')
+      document.body.classList.remove('is-resizing-panels-horizontal')
+      document.body.classList.remove('is-resizing-panels-vertical')
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+      document.body.classList.remove('is-resizing-panels')
+      document.body.classList.remove('is-resizing-panels-horizontal')
+      document.body.classList.remove('is-resizing-panels-vertical')
+    }
+  }, [stationSelectorSize, workspacePanelSize, map.settings.editorState, updateMapSettings, map.settings.editorState.panels])
+
+  function renderDockedPanel(
+    panel: JSX.Element,
+    sizeKey: DockPanelSizeKey,
+    dockSide: DockSide,
+    size: number,
+    label: string,
+  ): JSX.Element {
+    const showLeadingHandle = dockSide === 'Right' || dockSide === 'Bottom'
+    const handleClass =
+      dockSide === 'Left'
+        ? 'grid-docked-resizer edge-right'
+        : dockSide === 'Right'
+          ? 'grid-docked-resizer edge-left'
+          : dockSide === 'Top'
+            ? 'grid-docked-resizer edge-bottom'
+            : 'grid-docked-resizer edge-top'
+
+    const handle = (
+      <div
+        className={handleClass}
+        role="separator"
+        aria-label={`Resize ${label} panel`}
+        aria-orientation={isVerticalDockSide(dockSide) ? 'vertical' : 'horizontal'}
+        onMouseDown={(event) => beginDockPanelResize(sizeKey, dockSide, event)}
+      />
+    )
+
+    return (
+      <div className="grid-docked-panel" style={getDockPanelStyle(dockSide, size)}>
+        {showLeadingHandle ? handle : null}
+        {panel}
+        {!showLeadingHandle ? handle : null}
+      </div>
+    )
   }
 
   useEffect(() => {
@@ -903,7 +1638,27 @@ export function GridCanvas(): JSX.Element {
     }
   }
 
+  function syncCursorWorldPosition(stage: Konva.Stage | null): void {
+    if (!stage) {
+      return
+    }
+
+    const pointer = stage.getPointerPosition()
+    if (!pointer) {
+      return
+    }
+
+    setCursorWorldPosition({
+      x: (pointer.x - worldRenderOffsetX) / zoom,
+      y: (pointer.y - worldRenderOffsetY) / zoom,
+    })
+  }
+
   function handleCanvasClick(event: Konva.KonvaEventObject<MouseEvent>): void {
+    if (isSpacePanActiveRef.current) {
+      return
+    }
+
     if (panDidMoveRef.current) {
       panDidMoveRef.current = false
       return
@@ -928,7 +1683,11 @@ export function GridCanvas(): JSX.Element {
   }
 
   function handleStageMouseDown(event: Konva.KonvaEventObject<MouseEvent>): void {
-    if (event.evt.button !== 0) {
+    const isLeftButton = event.evt.button === 0
+    const isMiddleButton = event.evt.button === 1
+    const isSpacePan = isLeftButton && isSpacePanActiveRef.current
+
+    if (!isLeftButton && !isMiddleButton) {
       return
     }
 
@@ -937,9 +1696,14 @@ export function GridCanvas(): JSX.Element {
       return
     }
 
+    if (isMiddleButton || isSpacePan) {
+      event.evt.preventDefault()
+    }
+
     const targetName = event.target.name() ?? ''
     const clickedPanSurface = event.target === stage || targetName.includes('pan-surface')
-    if (!clickedPanSurface) {
+    const canStartPan = isMiddleButton || isSpacePan || clickedPanSurface
+    if (!canStartPan) {
       return
     }
 
@@ -955,11 +1719,13 @@ export function GridCanvas(): JSX.Element {
   }
 
   function handleStageMouseMove(event: Konva.KonvaEventObject<MouseEvent>): void {
+    const stage = event.target.getStage()
+    syncCursorWorldPosition(stage)
+
     if (!isPanning) {
       return
     }
 
-    const stage = event.target.getStage()
     const start = panStartPointerRef.current
     if (!stage || !start) {
       return
@@ -1249,7 +2015,7 @@ export function GridCanvas(): JSX.Element {
     let nextCurveBend = latestSection.curveBend
     if (latestSection.sectionKind === 'Curved') {
       const chordLength = distance(nextEndpoint1.coordinate, nextEndpoint2.coordinate)
-      const { min, max } = getCurveBendLimits(chordLength)
+      const { min, max } = getCurveBendLimits(latestSection, chordLength)
       const sign = latestSection.curveBend >= 0 ? 1 : -1
       nextCurveBend = sign * clamp(Math.abs(latestSection.curveBend), min, max)
     }
@@ -1285,7 +2051,7 @@ export function GridCanvas(): JSX.Element {
     const vectorY = nextY - midpointY
     const projected = vectorX * normalX + vectorY * normalY
     const sign = projected >= 0 ? 1 : -1
-    const { min, max } = getCurveBendLimits(chordLength)
+    const { min, max } = getCurveBendLimits(selectedSection, chordLength)
     const magnitude = clamp(Math.abs(projected), min, max)
 
     updateSection(selectedSection.id, {
@@ -1343,31 +2109,173 @@ export function GridCanvas(): JSX.Element {
     }
   }
 
-  return (
-    <section className="grid-panel">
-      <header className="panel-header inline">
-        <div>
-          <p className="eyebrow">Workspace</p>
-          <h2>{map.settings.title}</h2>
-        </div>
-        <div className="view-controls">
-          <button type="button" className="fit-button" onClick={fitToViewport}>
-            Fit View
-          </button>
-          <label className="zoom-control">
-            <span>Zoom</span>
+  const workspacePanel = (
+    <header className={workspacePanelVertical ? 'panel-header inline workspace-toolbar-panel dock-vertical' : 'panel-header inline workspace-toolbar-panel dock-horizontal'}>
+      <div>
+        <p className="eyebrow">Workspace</p>
+        <h2>{map.settings.title}</h2>
+      </div>
+      <div className="view-controls">
+        <HistoryToolbar cursorPosition={cursorWorldPosition} />
+        <div className="display-toggle-toolbar" aria-label="Display toggles">
+          <label>
             <input
-              type="range"
-              min={0.1}
-              max={2.5}
-              step={0.1}
-              value={zoom}
-              onChange={(event) => setZoom(Number(event.target.value))}
+              type="checkbox"
+              checked={showSectionLabels}
+              onChange={(event) => updateDisplayToggle('showSectionLabels', event.target.checked)}
             />
+            <span>Section Labels</span>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={showSignalEndpoints}
+              onChange={(event) => updateDisplayToggle('showSignalEndpoints', event.target.checked)}
+            />
+            <span>Signal Endpoints</span>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={showDirectionalIndicators}
+              onChange={(event) => updateDisplayToggle('showDirectionalIndicators', event.target.checked)}
+            />
+            <span>Direction</span>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={showValidationIcons}
+              onChange={(event) => updateDisplayToggle('showValidationIcons', event.target.checked)}
+            />
+            <span>Validation</span>
           </label>
         </div>
-      </header>
-      <div className="canvas-wrap" ref={containerRef}>
+        <div className="panel-dock-control">
+          <span>Workspace Dock</span>
+          <div className="panel-dock-button-group" role="group" aria-label="Workspace panel dock side">
+            {(['Top', 'Right', 'Bottom', 'Left'] as DockSide[]).map((side) => (
+              <button
+                key={`workspace-dock-${side}`}
+                type="button"
+                className={workspacePanelDock === side ? 'panel-dock-button active' : 'panel-dock-button'}
+                onClick={() => updatePanelDock('workspacePanelDock', side)}
+              >
+                {side.slice(0, 1)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="panel-dock-control">
+          <span>Stations Dock</span>
+          <div className="panel-dock-button-group" role="group" aria-label="Station selector panel dock side">
+            {(['Top', 'Right', 'Bottom', 'Left'] as DockSide[]).map((side) => (
+              <button
+                key={`station-dock-${side}`}
+                type="button"
+                className={stationSelectorDock === side ? 'panel-dock-button active' : 'panel-dock-button'}
+                onClick={() => updatePanelDock('stationSelectorDock', side)}
+              >
+                {side.slice(0, 1)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <label className="panel-size-control">
+          <span>Workspace Size</span>
+          <input
+            type="range"
+            min={140}
+            max={760}
+            step={10}
+            value={workspacePanelSize}
+            onChange={(event) => updatePanelSize('workspacePanelSize', Number(event.target.value))}
+          />
+        </label>
+        <label className="panel-size-control">
+          <span>Stations Size</span>
+          <input
+            type="range"
+            min={120}
+            max={760}
+            step={10}
+            value={stationSelectorSize}
+            onChange={(event) => updatePanelSize('stationSelectorSize', Number(event.target.value))}
+          />
+        </label>
+        <button type="button" className="fit-button" onClick={fitToViewport}>
+          Fit View
+        </button>
+        <button
+          type="button"
+          className="fit-button"
+          onClick={fitToSelection}
+          disabled={!selectedEntityBounds}
+        >
+          Fit To Selection
+        </button>
+        <label className="zoom-control">
+          <span>Zoom</span>
+          <input
+            type="range"
+            min={0.1}
+            max={2.5}
+            step={0.1}
+            value={zoom}
+            onChange={(event) => setZoom(Number(event.target.value))}
+          />
+        </label>
+      </div>
+    </header>
+  )
+
+  const stationSelectorPanel = (
+    <section className={stationSelectorVertical ? 'workspace-station-strip dock-vertical' : 'workspace-station-strip dock-horizontal'} aria-label="Station quick navigation">
+      <p className="workspace-station-strip-title">Train Stations</p>
+      <div className="workspace-station-strip-list" role="list">
+        {orderedStations.map((station) => {
+          const isSelected = selectedEntity?.entityType === 'station' && selectedEntity.id === station.id
+          return (
+            <button
+              key={station.id}
+              type="button"
+              role="listitem"
+              className={isSelected ? 'workspace-station-chip active' : 'workspace-station-chip'}
+              onClick={() => centerOnStation(station)}
+              title={`Center and select ${station.stationName}`}
+            >
+              {`#${station.stationNumber} ${station.stationName}`}
+            </button>
+          )
+        })}
+        {orderedStations.length === 0 && (
+          <p className="workspace-station-empty">No stations on this map yet.</p>
+        )}
+      </div>
+    </section>
+  )
+
+  return (
+    <section className="grid-panel">
+      <div className="grid-panel-layout">
+        <div className="grid-panel-dock grid-panel-dock-top">
+          {workspacePanelDock === 'Top' && (
+            renderDockedPanel(workspacePanel, 'workspacePanelSize', 'Top', workspacePanelSize, 'Workspace')
+          )}
+          {stationSelectorDock === 'Top' && (
+            renderDockedPanel(stationSelectorPanel, 'stationSelectorSize', 'Top', stationSelectorSize, 'Train Stations')
+          )}
+        </div>
+        <div className="grid-panel-middle">
+          <div className="grid-panel-dock grid-panel-dock-left">
+            {workspacePanelDock === 'Left' && (
+              renderDockedPanel(workspacePanel, 'workspacePanelSize', 'Left', workspacePanelSize, 'Workspace')
+            )}
+            {stationSelectorDock === 'Left' && (
+              renderDockedPanel(stationSelectorPanel, 'stationSelectorSize', 'Left', stationSelectorSize, 'Train Stations')
+            )}
+          </div>
+          <div className="canvas-wrap" ref={containerRef}>
         <Stage
           width={stageWidth}
           height={stageHeight}
@@ -1376,7 +2284,10 @@ export function GridCanvas(): JSX.Element {
           onMouseDown={handleStageMouseDown}
           onMouseMove={handleStageMouseMove}
           onMouseUp={handleStageMouseUp}
-          onMouseLeave={handleStageMouseUp}
+          onMouseLeave={() => {
+            handleStageMouseUp()
+            setCursorWorldPosition(null)
+          }}
         >
           <Layer>
             <Rect x={0} y={0} width={stageWidth} height={stageHeight} fill="#0e1725" name="pan-surface" />
@@ -1466,6 +2377,7 @@ export function GridCanvas(): JSX.Element {
                 const isSelected = selectedEntity?.entityType === 'section' && selectedEntity.id === section.id
                 const isHovered = hoveredSectionId === section.id
                 const isCurved = section.sectionKind === 'Curved'
+                const sectionLabelText = section.sectionName.trim() || String(section.sectionNumber)
                 const reviewState = connectionReview.sectionConnectivity[section.id]
                 const signalReviewState = connectionReview.sectionSignalConnectivity[section.id]
                 const validationStroke =
@@ -1527,10 +2439,18 @@ export function GridCanvas(): JSX.Element {
                     draggable={activeTool === 'select' && !connectionsLocked}
                     onDragStart={(event) => {
                       event.cancelBubble = true
+                      setDragTarget({ kind: 'section', id: section.id })
+                      syncCursorWorldPosition(event.target.getStage())
+                    }}
+                    onDragMove={(event) => {
+                      event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
                     }}
                     onDragEnd={(event) => {
                       event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
                       moveSection(section.id, event.target.x(), event.target.y())
+                      setDragTarget(null)
                     }}
                     onClick={(event) => {
                       event.cancelBubble = true
@@ -1551,7 +2471,7 @@ export function GridCanvas(): JSX.Element {
                       lineCap="round"
                       tension={isCurved ? 0.5 : 0}
                     />
-                    {directionArrowMarkers.map((marker, markerIndex) => (
+                    {showDirectionalIndicators && directionArrowMarkers.map((marker, markerIndex) => (
                       <Group
                         key={`${section.id}-direction-arrow-${markerIndex}`}
                         x={marker.x - midpointX}
@@ -1564,7 +2484,7 @@ export function GridCanvas(): JSX.Element {
                         <Line points={[4, 0, 0, 3]} stroke={marker.color} strokeWidth={1.2} />
                       </Group>
                     ))}
-                    {validationStroke && (
+                    {showValidationIcons && validationStroke && (
                       <Line
                         points={localPoints}
                         stroke={validationStroke}
@@ -1576,42 +2496,48 @@ export function GridCanvas(): JSX.Element {
                         listening={false}
                       />
                     )}
-                    <Group x={labelX - midpointX} y={labelY - midpointY}>
-                      {renderNumericLabel(sectionLabelStyle, String(section.sectionNumber), isSelected)}
-                    </Group>
-                    <Group x={labelX - midpointX + 16} y={labelY - midpointY + 14} listening={false}>
-                      <Rect
-                        x={-20}
-                        y={-8}
-                        width={40}
-                        height={16}
-                        cornerRadius={4}
-                        fill="#0b1624"
-                        stroke={directionDescriptor.color}
-                        strokeWidth={1}
-                      />
-                      <Text
-                        x={-20}
-                        y={-3}
-                        width={40}
-                        align="center"
-                        text={directionDescriptor.symbol}
-                        fontSize={8}
-                        fill={directionDescriptor.color}
-                      />
-                    </Group>
-                    <Group x={labelX - midpointX - 18} y={labelY - midpointY + 14} listening={false}>
-                      <Circle radius={8} fill={signalBadgeColor} stroke="#0f172a" strokeWidth={1} />
-                      <Text
-                        x={-6}
-                        y={-5}
-                        width={12}
-                        align="center"
-                        text={signalBadgeText}
-                        fontSize={8}
-                        fill="#ffffff"
-                      />
-                    </Group>
+                    {showSectionLabels && (
+                      <Group x={labelX - midpointX} y={labelY - midpointY}>
+                        {renderNumericLabel(sectionLabelStyle, sectionLabelText, isSelected)}
+                      </Group>
+                    )}
+                    {showDirectionalIndicators && (
+                      <Group x={labelX - midpointX + 16} y={labelY - midpointY + 14} listening={false}>
+                        <Rect
+                          x={-20}
+                          y={-8}
+                          width={40}
+                          height={16}
+                          cornerRadius={4}
+                          fill="#0b1624"
+                          stroke={directionDescriptor.color}
+                          strokeWidth={1}
+                        />
+                        <Text
+                          x={-20}
+                          y={-3}
+                          width={40}
+                          align="center"
+                          text={directionDescriptor.symbol}
+                          fontSize={8}
+                          fill={directionDescriptor.color}
+                        />
+                      </Group>
+                    )}
+                    {showValidationIcons && (
+                      <Group x={labelX - midpointX - 18} y={labelY - midpointY + 14} listening={false}>
+                        <Circle radius={8} fill={signalBadgeColor} stroke="#0f172a" strokeWidth={1} />
+                        <Text
+                          x={-6}
+                          y={-5}
+                          width={12}
+                          align="center"
+                          text={signalBadgeText}
+                          fontSize={8}
+                          fill="#ffffff"
+                        />
+                      </Group>
+                    )}
                   </Group>
                 )
               })}
@@ -1630,18 +2556,25 @@ export function GridCanvas(): JSX.Element {
                     draggable={activeTool === 'select'}
                     onDragStart={(event) => {
                       event.cancelBubble = true
+                      beginHistoryBatch()
+                      setDragTarget({ kind: 'intersection', id: intersection.id })
                       setDraggedIntersectionId(intersection.id)
+                      syncCursorWorldPosition(event.target.getStage())
                     }}
                     onDragMove={(event) => {
                       event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
                       moveIntersection(intersection.id, event.target.x(), event.target.y())
                     }}
                     onDragEnd={(event) => {
                       event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
                       moveIntersection(intersection.id, event.target.x(), event.target.y())
                       setDraggedIntersectionId((current) =>
                         current === intersection.id ? null : current,
                       )
+                      commitHistoryBatch()
+                      setDragTarget(null)
                     }}
                     onClick={(event) => {
                       event.cancelBubble = true
@@ -1729,9 +2662,29 @@ export function GridCanvas(): JSX.Element {
 
                 return (
                   <Group
-                    key={`junction-${junction.key}`}
+                    key={`junction-${junction.connectedSectionNumbers.join('-')}`}
                     x={junction.x}
                     y={junction.y}
+                    draggable={activeTool === 'select'}
+                    onDragStart={(event) => {
+                      event.cancelBubble = true
+                      beginHistoryBatch()
+                      setDragTarget({ kind: 'junction', id: junction.key, endpointRefs: junction.connectedEndpoints })
+                      syncCursorWorldPosition(event.target.getStage())
+                      selectEntity({ entityType: 'junction', id: junction.key })
+                    }}
+                    onDragMove={(event) => {
+                      event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
+                      moveJunction(junction.key, event.target.x(), event.target.y(), junction.connectedEndpoints)
+                    }}
+                    onDragEnd={(event) => {
+                      event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
+                      moveJunction(junction.key, event.target.x(), event.target.y(), junction.connectedEndpoints)
+                      commitHistoryBatch()
+                      setDragTarget(null)
+                    }}
                     onClick={(event) => {
                       event.cancelBubble = true
                       selectEntity({ entityType: 'junction', id: junction.key })
@@ -1740,7 +2693,7 @@ export function GridCanvas(): JSX.Element {
                     <Circle radius={hitRadius} fill="#000000" opacity={0.001} />
                     {renderNumericLabel(
                       junctionStyle,
-                      String(junction.displayNumber),
+                      junction.name || String(junction.displayNumber),
                       isJunctionSelected,
                       splitRotation,
                     )}
@@ -1757,7 +2710,7 @@ export function GridCanvas(): JSX.Element {
                 )
               })}
 
-              {activeTool === 'select' && (
+              {activeTool === 'select' && showSignalEndpoints && (
                 <Group listening={false}>
                   {map.sections.map((section) => {
                     const endpointKeys: SectionEndpointKey[] = ['endpoint1', 'endpoint2']
@@ -1776,7 +2729,7 @@ export function GridCanvas(): JSX.Element {
                     })
                   })}
 
-                  {signalSocketPoints.map((socket) => (
+                  {!isRepositioning && signalSocketPoints.map((socket) => (
                     <Circle
                       key={`signal-socket-${socket.key}`}
                       x={socket.x}
@@ -1795,7 +2748,7 @@ export function GridCanvas(): JSX.Element {
                     />
                   ))}
 
-                  {signalSocketPoints.map((socket) => (
+                  {!isRepositioning && signalSocketPoints.map((socket) => (
                     <Text
                       key={`signal-socket-type-${socket.key}`}
                       x={socket.x - 5}
@@ -1818,6 +2771,8 @@ export function GridCanvas(): JSX.Element {
                     draggable
                     onDragStart={(event) => {
                       event.cancelBubble = true
+                      beginHistoryBatch()
+                      setDragTarget({ kind: 'section-endpoint', id: selectedSection.id, endpointKey: 'endpoint1' })
                       const endpoint = selectedSection.endpoint1
                       const groupKey = `${Math.round(endpoint.coordinate.x)}:${Math.round(endpoint.coordinate.y)}`
                       const group = sectionEndpointGroups[groupKey] ?? []
@@ -1838,9 +2793,12 @@ export function GridCanvas(): JSX.Element {
                       if (!connectionsLocked) {
                         disconnectSectionEndpointStation(selectedSection.id, 'endpoint1')
                       }
+
+                      syncCursorWorldPosition(event.target.getStage())
                     }}
                     onDragMove={(event) => {
                       event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
                       const candidate = getEndpointSnapCandidate(
                         selectedSection.id,
                         event.target.x(),
@@ -1886,6 +2844,7 @@ export function GridCanvas(): JSX.Element {
                     }}
                     onDragEnd={(event) => {
                       event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
                       const candidate = getEndpointSnapCandidate(
                         selectedSection.id,
                         event.target.x(),
@@ -1936,6 +2895,7 @@ export function GridCanvas(): JSX.Element {
 
                       setSnapPreview((current) => (current?.endpointKey === 'endpoint1' ? null : current))
                       delete endpointDragStateRef.current.endpoint1
+                      setDragTarget(null)
                     }}
                   >
                     <Circle radius={8} fill="#22d3ee" stroke="#0e7490" strokeWidth={1.5} />
@@ -1948,6 +2908,8 @@ export function GridCanvas(): JSX.Element {
                     draggable
                     onDragStart={(event) => {
                       event.cancelBubble = true
+                      beginHistoryBatch()
+                      setDragTarget({ kind: 'section-endpoint', id: selectedSection.id, endpointKey: 'endpoint2' })
                       const endpoint = selectedSection.endpoint2
                       const groupKey = `${Math.round(endpoint.coordinate.x)}:${Math.round(endpoint.coordinate.y)}`
                       const group = sectionEndpointGroups[groupKey] ?? []
@@ -1968,9 +2930,12 @@ export function GridCanvas(): JSX.Element {
                       if (!connectionsLocked) {
                         disconnectSectionEndpointStation(selectedSection.id, 'endpoint2')
                       }
+
+                      syncCursorWorldPosition(event.target.getStage())
                     }}
                     onDragMove={(event) => {
                       event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
                       const candidate = getEndpointSnapCandidate(
                         selectedSection.id,
                         event.target.x(),
@@ -2016,6 +2981,7 @@ export function GridCanvas(): JSX.Element {
                     }}
                     onDragEnd={(event) => {
                       event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
                       const candidate = getEndpointSnapCandidate(
                         selectedSection.id,
                         event.target.x(),
@@ -2066,6 +3032,7 @@ export function GridCanvas(): JSX.Element {
 
                       setSnapPreview((current) => (current?.endpointKey === 'endpoint2' ? null : current))
                       delete endpointDragStateRef.current.endpoint2
+                      setDragTarget(null)
                     }}
                   >
                     <Circle radius={8} fill="#22d3ee" stroke="#0e7490" strokeWidth={1.5} />
@@ -2094,17 +3061,24 @@ export function GridCanvas(): JSX.Element {
                         draggable
                         onDragStart={(event) => {
                           event.cancelBubble = true
+                          beginHistoryBatch()
+                          setDragTarget({ kind: 'section', id: selectedSection.id })
+                          syncCursorWorldPosition(event.target.getStage())
                         }}
                         onDragMove={(event) => {
                           event.cancelBubble = true
+                          syncCursorWorldPosition(event.target.getStage())
                           updateSectionCurveControl(event.target.x(), event.target.y())
                         }}
                         onDragEnd={(event) => {
                           event.cancelBubble = true
+                          syncCursorWorldPosition(event.target.getStage())
                           const applied = updateSectionCurveControl(event.target.x(), event.target.y())
                           if (applied) {
                             event.target.position(applied)
                           }
+                          commitHistoryBatch()
+                          setDragTarget(null)
                         }}
                       >
                         <Circle radius={7} fill="#f59e0b" stroke="#92400e" strokeWidth={1.4} />
@@ -2126,26 +3100,69 @@ export function GridCanvas(): JSX.Element {
                     : stationReview?.status === 'partial'
                       ? '#facc15'
                       : '#1e293b'
-                const slotCount = station.freightStationSequence.length
                 const slotHeight = 14
                 const slotGap = 4
-                const freightPanelWidth = 64
-                const rightPanelWidth = 108
-                const stationWidth = freightPanelWidth + rightPanelWidth
-                const stationInnerHeight = Math.max(32, slotCount * (slotHeight + slotGap) + 8)
-                const stationHeight = stationInnerHeight + 8
-                const stationLeftX = -stationWidth / 2
-                const stationTopY = -stationHeight / 2
+                const metrics = getStationDisplayMetrics(station)
+                const layoutDirection = metrics.layoutDirection
+                const stationWidth = metrics.stationWidth
+                const stationHeight = metrics.stationHeight
+                const stationLeftX = metrics.stationLeftX
+                const stationTopY = metrics.stationTopY
                 const outboundArrow = getStationOutboundArrow(station)
                 const headerText = `${station.stationName} #${station.stationNumber}`
                 const leftPoint = getStationConnectionPoint(station, 'Left')
                 const rightPoint = getStationConnectionPoint(station, 'Right')
+                const stationMetaPanelX = metrics.stationMetaPanelX
+                const stationMetaPanelY = metrics.stationMetaPanelY
+                const freightPanelX = metrics.freightPanelX
+                const freightPanelY = metrics.freightPanelY
+                const metaPadding = 6
+                const metaInnerWidth = metrics.stationMetaPanelWidth - metaPadding * 2
+                const metaTitleColumnWidth = 70
+                const metaStatusColumnX = stationMetaPanelX + metaPadding + metaTitleColumnWidth + 6
+                const metaStatusColumnWidth = Math.max(24, metaInnerWidth - metaTitleColumnWidth - 6)
+                const leftInward = {
+                  x: anchorX - leftPoint.x,
+                  y: anchorY - leftPoint.y,
+                }
+                const leftInwardLength = Math.max(1, Math.sqrt(leftInward.x * leftInward.x + leftInward.y * leftInward.y))
+                const leftGlyph = {
+                  x: leftPoint.x - anchorX + (leftInward.x / leftInwardLength) * 13,
+                  y: leftPoint.y - anchorY + (leftInward.y / leftInwardLength) * 13,
+                }
+                const rightInward = {
+                  x: anchorX - rightPoint.x,
+                  y: anchorY - rightPoint.y,
+                }
+                const rightInwardLength = Math.max(1, Math.sqrt(rightInward.x * rightInward.x + rightInward.y * rightInward.y))
+                const rightGlyph = {
+                  x: rightPoint.x - anchorX + (rightInward.x / rightInwardLength) * 13,
+                  y: rightPoint.y - anchorY + (rightInward.y / rightInwardLength) * 13,
+                }
+                const layoutBadgeText =
+                  layoutDirection === 'HorizontalMetaRight'
+                    ? 'H-R'
+                    : layoutDirection === 'HorizontalMetaLeft'
+                      ? 'H-L'
+                      : layoutDirection === 'VerticalMetaTop'
+                        ? 'V-T'
+                        : 'V-B'
                 const leftKey = `${station.id}:Left`
                 const rightKey = `${station.id}:Right`
                 const leftFlashing = flashingStationSides[leftKey] === true
                 const rightFlashing = flashingStationSides[rightKey] === true
                 const leftOccupied = (stationSideOccupancy[leftKey] ?? null) !== null
                 const rightOccupied = (stationSideOccupancy[rightKey] ?? null) !== null
+                const leftGlyphColor = leftFlashing
+                  ? '#fcd34d'
+                  : leftOccupied
+                    ? '#fecaca'
+                    : '#bbf7d0'
+                const rightGlyphColor = rightFlashing
+                  ? '#fcd34d'
+                  : rightOccupied
+                    ? '#bfdbfe'
+                    : '#bbf7d0'
 
                 return (
                   <Group
@@ -2155,14 +3172,21 @@ export function GridCanvas(): JSX.Element {
                     draggable={activeTool === 'select'}
                     onDragStart={(event) => {
                       event.cancelBubble = true
+                      beginHistoryBatch()
+                      setDragTarget({ kind: 'station', id: station.id })
+                      syncCursorWorldPosition(event.target.getStage())
                     }}
                     onDragMove={(event) => {
                       event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
                       moveStation(station.id, event.target.x(), event.target.y())
                     }}
                     onDragEnd={(event) => {
                       event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
                       moveStation(station.id, event.target.x(), event.target.y())
+                      commitHistoryBatch()
+                      setDragTarget(null)
                     }}
                     onClick={(event) => {
                       event.cancelBubble = true
@@ -2181,10 +3205,32 @@ export function GridCanvas(): JSX.Element {
                     />
 
                     <Rect
-                      x={stationLeftX + 4}
+                      x={stationLeftX + stationWidth - 34}
                       y={stationTopY + 4}
-                      width={freightPanelWidth - 8}
-                      height={stationInnerHeight}
+                      width={30}
+                      height={14}
+                      cornerRadius={4}
+                      fill="#0b1624"
+                      stroke="#67e8f9"
+                      strokeWidth={0.8}
+                    />
+                    <Text
+                      x={stationLeftX + stationWidth - 34}
+                      y={stationTopY + 8}
+                      width={30}
+                      height={10}
+                      text={layoutBadgeText}
+                      fontSize={8}
+                      fill="#e2f3ff"
+                      align="center"
+                      verticalAlign="middle"
+                    />
+
+                    <Rect
+                      x={freightPanelX}
+                      y={freightPanelY}
+                      width={metrics.freightPanelWidth}
+                      height={metrics.freightPanelHeight}
                       cornerRadius={6}
                       fill="#e5e7eb"
                       stroke="#6b7280"
@@ -2192,10 +3238,10 @@ export function GridCanvas(): JSX.Element {
                     />
 
                     <Rect
-                      x={stationLeftX + freightPanelWidth}
-                      y={stationTopY + 4}
-                      width={rightPanelWidth - 4}
-                      height={stationInnerHeight}
+                      x={stationMetaPanelX}
+                      y={stationMetaPanelY}
+                      width={metrics.stationMetaPanelWidth}
+                      height={metrics.stationMetaPanelHeight}
                       cornerRadius={6}
                       fill="#f8fafc"
                       stroke="#64748b"
@@ -2203,33 +3249,45 @@ export function GridCanvas(): JSX.Element {
                     />
 
                     <Text
-                      x={stationLeftX + freightPanelWidth + 6}
-                      y={stationTopY + 9}
-                      width={rightPanelWidth - 16}
-                      height={20}
+                      x={stationMetaPanelX + metaPadding}
+                      y={stationMetaPanelY + 8}
+                      width={metaTitleColumnWidth}
+                      height={metrics.stationMetaPanelHeight - 12}
                       text={headerText}
-                      fontSize={10}
+                      fontSize={9}
                       fill="#0f172a"
                       align="left"
                       verticalAlign="top"
                     />
 
                     <Text
-                      x={stationLeftX + freightPanelWidth + 6}
-                      y={stationTopY + stationInnerHeight - 15}
-                      width={rightPanelWidth - 16}
+                      x={metaStatusColumnX}
+                      y={stationMetaPanelY + 8}
+                      width={metaStatusColumnWidth}
                       height={12}
-                      text={`OUT ${outboundArrow}`}
+                      text={`IN #${station.sectionInNumber ?? '-'}`}
+                      fontSize={9}
+                      fill="#0f766e"
+                      align="right"
+                      verticalAlign="middle"
+                    />
+
+                    <Text
+                      x={metaStatusColumnX}
+                      y={stationMetaPanelY + 22}
+                      width={metaStatusColumnWidth}
+                      height={12}
+                      text={`OUT ${outboundArrow} #${station.sectionOutNumber ?? '-'}`}
                       fontSize={9}
                       fill="#1d4ed8"
-                      align="left"
+                      align="right"
                       verticalAlign="middle"
                     />
 
                     {station.freightStationSequence.map((slot, index) => {
-                      const slotX = stationLeftX + 8
-                      const slotY = stationTopY + 8 + index * (slotHeight + slotGap)
-                      const slotWidth = freightPanelWidth - 16
+                      const slotX = freightPanelX + 4
+                      const slotY = freightPanelY + 4 + index * (slotHeight + slotGap)
+                      const slotWidth = metrics.freightPanelWidth - 8
                       const fill = slot.stationType === 'Liquid' ? '#67e8f9' : '#f5d0fe'
                       const stroke = slot.stationType === 'Liquid' ? '#155e75' : '#7e22ce'
                       const modeText = slot.mode === 'Load' ? 'L' : 'U'
@@ -2286,6 +3344,16 @@ export function GridCanvas(): JSX.Element {
                             )
                           }}
                         />
+                        <Text
+                          x={leftGlyph.x - 12}
+                          y={leftGlyph.y - 5}
+                          width={24}
+                          align="center"
+                          text="IN"
+                          fontSize={8}
+                          fill={leftGlyphColor}
+                          listening={false}
+                        />
                         <Circle
                           x={rightPoint.x - anchorX}
                           y={rightPoint.y - anchorY}
@@ -2309,6 +3377,16 @@ export function GridCanvas(): JSX.Element {
                               current?.stationId === station.id && current.side === 'Right' ? null : current,
                             )
                           }}
+                        />
+                        <Text
+                          x={rightGlyph.x - 14}
+                          y={rightGlyph.y - 5}
+                          width={28}
+                          align="center"
+                          text="OUT"
+                          fontSize={8}
+                          fill={rightGlyphColor}
+                          listening={false}
                         />
                       </>
                     )}
@@ -2335,14 +3413,14 @@ export function GridCanvas(): JSX.Element {
                     x={6}
                     y={6}
                     width={86}
-                    text={`${hoveredStationPoint.side}: ${hoveredStationPoint.occupied ? 'occupied' : 'empty'}`}
+                    text={`${hoveredStationPoint.side === 'Left' ? 'IN' : 'OUT'}: ${hoveredStationPoint.occupied ? 'occupied' : 'empty'}`}
                     fontSize={9}
                     fill="#e2e8f0"
                   />
                 </Group>
               )}
 
-              {selectedSignal && activeTool === 'select' && (() => {
+              {!isRepositioning && selectedSignal && activeTool === 'select' && (() => {
                 const signalCenter = getSignalDisplayPoint(selectedSignal)
                 const socketAResolved = selectedSignal.socketA
                   ? signalSocketLookup[signalSocketRefKey(selectedSignal.socketA)]
@@ -2381,6 +3459,7 @@ export function GridCanvas(): JSX.Element {
                       draggable
                       onDragMove={(event) => {
                         event.cancelBubble = true
+                        syncCursorWorldPosition(event.target.getStage())
                         const excludeKey = selectedSignal.socketB ? signalSocketRefKey(selectedSignal.socketB) : undefined
                         const candidate = findSignalSocketCandidate(event.target.x(), event.target.y(), excludeKey)
                         if (candidate) {
@@ -2404,6 +3483,7 @@ export function GridCanvas(): JSX.Element {
                       draggable
                       onDragMove={(event) => {
                         event.cancelBubble = true
+                        syncCursorWorldPosition(event.target.getStage())
                         const excludeKey = selectedSignal.socketA ? signalSocketRefKey(selectedSignal.socketA) : undefined
                         const candidate = findSignalSocketCandidate(event.target.x(), event.target.y(), excludeKey)
                         if (candidate) {
@@ -2424,7 +3504,7 @@ export function GridCanvas(): JSX.Element {
                 )
               })()}
 
-              {map.signals.map((signal) => {
+              {!isRepositioning && map.signals.map((signal) => {
                 const isSelected = selectedEntity?.entityType === 'signal' && selectedEntity.id === signal.id
                 const displayPoint = getSignalDisplayPoint(signal)
                 const statusReview = connectionReview.signalConnectivity[signal.id]
@@ -2453,10 +3533,18 @@ export function GridCanvas(): JSX.Element {
                     draggable={activeTool === 'select' && statusReview?.status !== 'ok'}
                     onDragStart={(event) => {
                       event.cancelBubble = true
+                      setDragTarget({ kind: 'signal', id: signal.id })
+                      syncCursorWorldPosition(event.target.getStage())
+                    }}
+                    onDragMove={(event) => {
+                      event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
                     }}
                     onDragEnd={(event) => {
                       event.cancelBubble = true
+                      syncCursorWorldPosition(event.target.getStage())
                       moveSignal(signal.id, event.target.x(), event.target.y())
+                      setDragTarget(null)
                     }}
                     onClick={(event) => {
                       event.cancelBubble = true
@@ -2501,9 +3589,33 @@ export function GridCanvas(): JSX.Element {
                   </Group>
                 )
               })}
+
+              {isRepositioning && repositionCoordinateLabels.map((label) => (
+                <Group key={label.key} x={label.x} y={label.y} listening={false}>
+                  {renderCoordinateLabel(label.text)}
+                </Group>
+              ))}
             </Group>
           </Layer>
         </Stage>
+          </div>
+          <div className="grid-panel-dock grid-panel-dock-right">
+            {workspacePanelDock === 'Right' && (
+              renderDockedPanel(workspacePanel, 'workspacePanelSize', 'Right', workspacePanelSize, 'Workspace')
+            )}
+            {stationSelectorDock === 'Right' && (
+              renderDockedPanel(stationSelectorPanel, 'stationSelectorSize', 'Right', stationSelectorSize, 'Train Stations')
+            )}
+          </div>
+        </div>
+        <div className="grid-panel-dock grid-panel-dock-bottom">
+          {workspacePanelDock === 'Bottom' && (
+            renderDockedPanel(workspacePanel, 'workspacePanelSize', 'Bottom', workspacePanelSize, 'Workspace')
+          )}
+          {stationSelectorDock === 'Bottom' && (
+            renderDockedPanel(stationSelectorPanel, 'stationSelectorSize', 'Bottom', stationSelectorSize, 'Train Stations')
+          )}
+        </div>
       </div>
     </section>
   )
