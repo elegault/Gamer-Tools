@@ -1301,6 +1301,19 @@ export function GridCanvas(): JSX.Element {
     persistPanOffset(nextPanOffset)
   }
 
+  function persistPanOffset(nextPanOffset: { x: number; y: number }): void {
+    updateMapSettings({
+      editorState: {
+        ...map.settings.editorState,
+        viewport: {
+          ...map.settings.editorState.viewport,
+          panX: nextPanOffset.x,
+          panY: nextPanOffset.y,
+        },
+      },
+    })
+  }
+
   function fitToViewport(): void {
     const componentBounds = getPlacedEntityBounds(map)
     if (!componentBounds) {
@@ -1398,19 +1411,6 @@ export function GridCanvas(): JSX.Element {
       window.removeEventListener('blur', handleWindowBlur)
     }
   }, [])
-
-  function persistPanOffset(nextPanOffset: { x: number; y: number }): void {
-    updateMapSettings({
-      editorState: {
-        ...map.settings.editorState,
-        viewport: {
-          ...map.settings.editorState.viewport,
-          panX: nextPanOffset.x,
-          panY: nextPanOffset.y,
-        },
-      },
-    })
-  }
 
   function updateDisplayToggle(
     key: 'showSectionLabels' | 'showSignalEndpoints' | 'showDirectionalIndicators' | 'showValidationIcons',

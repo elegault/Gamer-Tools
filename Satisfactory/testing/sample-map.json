@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "lastUpdatedIso": "2026-07-19T00:00:00.000Z",
+  "settings": {
+    "title": "Starter Demo Map",
+    "worldWidth": 1000,
+    "worldHeight": 1000,
+    "defaultSectionColor": "#da0fec",
+    "junctionNumberOverrides": [],
+    "editorState": {
+      "viewport": {
+        "zoom": 1,
+        "panX": 0,
+        "panY": 0
+      },
+      "lastSelected": null,
+      "panels": {
+        "topbarCollapsed": false,
+        "sidebarCollapsed": false,
+        "inspectorCollapsed": false,
+        "sidebarWidth": 260,
+        "inspectorWidth": 600,
+        "workspacePanelDock": "Top",
+        "stationSelectorDock": "Top",
+        "workspacePanelSize": 230,
+        "stationSelectorSize": 180
+      },
+      "inspectorSections": {
+        "mapUi": false,
+        "selection": false,
+        "connectivity": false,
+        "review": false,
+        "relocate": false,
+        "totals": false,
+        "legend": false
+      },
+      "displayToggles": {
+        "showSectionLabels": true,
+        "showSignalEndpoints": true,
+        "showDirectionalIndicators": true,
+        "showValidationIcons": true
+      }
+    }
+  },
+  "stations": [
+    {
+      "id": "station-starter",
+      "stationName": "Starter Station",
+      "stationNumber": 1,
+      "color": "#c7d2fe",
+      "layoutDirection": "HorizontalMetaRight",
+      "sectionInNumber": null,
+      "sectionOutNumber": 1,
+      "inbound": {
+        "x": 100,
+        "y": 100
+      },
+      "outbound": {
+        "x": 180,
+        "y": 100
+      },
+      "liquidFreightStationCount": 0,
+      "solidFreightStationCount": 1,
+      "freightStationSequence": [
+        {
+          "slotIndex": 1,
+          "stationType": "Freight",
+          "mode": "Load",
+          "material": ""
+        }
+      ],
+      "freightSectionMaterials": [],
+      "notes": "Sample station for new contributors."
+    }
+  ],
+  "sections": [
+    {
+      "id": "section-starter",
+      "sectionNumber": 1,
+      "sectionName": "Starter Line",
+      "color": "#da0fec",
+      "sectionKind": "Straight",
+      "directionMode": "Bidirectional",
+      "curveBendMin": 0,
+      "curveBendMax": 480,
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": 236,
+          "y": 100
+        },
+        "stationConnection": {
+          "stationId": "station-starter",
+          "side": "Right"
+        },
+        "signal1": null,
+        "signal2": null,
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": null,
+            "overrideType": null
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": null,
+            "overrideType": null
+          }
+        },
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": 336,
+          "y": 100
+        },
+        "stationConnection": null,
+        "signal1": null,
+        "signal2": null,
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": null,
+            "overrideType": null
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": null,
+            "overrideType": null
+          }
+        },
+        "entranceMode": "Allowed"
+      }
+    }
+  ],
+  "intersections": [],
+  "signals": []
+}
