@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
 import { Circle, Group, Layer, Line, Rect, Stage, Text } from 'react-konva'
 import type Konva from 'konva'
-import type { MapDocument } from '../models/mapSchema'
-import { buildConnectionReview, buildJunctionMetadata } from '../models/connectionReview'
+import type { MapDocument, SignalType } from '../models/mapSchema'
+import { buildConnectionReview, buildJunctionMetadata, buildRouteSignalSuggestionMap } from '../models/connectionReview'
 import { HistoryToolbar } from './HistoryToolbar'
 import { useEditorStore } from '../store/editorStore'
 
@@ -69,6 +69,7 @@ type CoordinateLabel = {
   y: number
   text: string
 }
+
 function getCurveBendLimits(section: MapDocument['sections'][number], chordLength: number): { min: number; max: number } {
   const min = Math.max(0, Math.round(section.curveBendMin))
   const fallbackMax = Math.round(chordLength * 0.85)
@@ -275,8 +276,9 @@ function getSectionSignalSocketPoint(
   const normalX = -tangentY
   const normalY = tangentX
   const sideSign = side === 'Left' ? -1 : 1
-  const longitudinalOffset = 14
-  const lateralPadding = 10
+  const curvedOffset = section.sectionKind === 'Curved' ? Math.min(18, Math.abs(section.curveBend) / 24) : 0
+  const longitudinalOffset = section.sectionKind === 'Curved' ? 18 + curvedOffset : 14
+  const lateralPadding = section.sectionKind === 'Curved' ? 16 + curvedOffset : 10
   const lateralJitter = ((section.sectionNumber % 3) - 1) * 2
   const lateralOffset = lateralPadding + lateralJitter
 
@@ -284,6 +286,106 @@ function getSectionSignalSocketPoint(
     x: endpoint.x + tangentX * longitudinalOffset + normalX * sideSign * lateralOffset,
     y: endpoint.y + tangentY * longitudinalOffset + normalY * sideSign * lateralOffset,
   }
+}
+
+function getSectionEndpointChannelAngle(
+  section: MapDocument['sections'][number],
+  endpointKey: SectionEndpointKey,
+): number {
+  const endpoint = getSectionEndpointCoordinate(section, endpointKey)
+  const opposite = getSectionEndpointCoordinate(section, getOtherEndpointKey(endpointKey))
+
+  if (section.sectionKind !== 'Curved') {
+    return Math.atan2(opposite.y - endpoint.y, opposite.x - endpoint.x)
+  }
+
+  const midpointX = (section.endpoint1.coordinate.x + section.endpoint2.coordinate.x) / 2
+  const midpointY = (section.endpoint1.coordinate.y + section.endpoint2.coordinate.y) / 2
+  const chordX = section.endpoint2.coordinate.x - section.endpoint1.coordinate.x
+  const chordY = section.endpoint2.coordinate.y - section.endpoint1.coordinate.y
+  const chordLength = Math.max(1, Math.sqrt(chordX * chordX + chordY * chordY))
+  const normalX = -chordY / chordLength
+  const normalY = chordX / chordLength
+  const controlX = midpointX + normalX * section.curveBend
+  const controlY = midpointY + normalY * section.curveBend
+
+  const tangentX = endpointKey === 'endpoint1'
+    ? controlX - section.endpoint1.coordinate.x
+    : controlX - section.endpoint2.coordinate.x
+  const tangentY = endpointKey === 'endpoint1'
+    ? controlY - section.endpoint1.coordinate.y
+    : controlY - section.endpoint2.coordinate.y
+
+  if (Math.abs(tangentX) < 0.001 && Math.abs(tangentY) < 0.001) {
+    return Math.atan2(opposite.y - endpoint.y, opposite.x - endpoint.x)
+  }
+
+  return Math.atan2(tangentY, tangentX)
+}
+
+function getSectionRenderEndpoint(
+  section: MapDocument['sections'][number],
+  endpointKey: SectionEndpointKey,
+  insetDistance: number,
+): { x: number; y: number } {
+  const endpoint = getSectionEndpointCoordinate(section, endpointKey)
+  const angle = getSectionEndpointChannelAngle(section, endpointKey)
+  return {
+    x: endpoint.x + Math.cos(angle) * insetDistance,
+    y: endpoint.y + Math.sin(angle) * insetDistance,
+  }
+}
+
+function getSocketVisualState(
+  endpoint: MapDocument['sections'][number]['endpoint1'],
+  side: SectionEndpointSide,
+  routeSuggestedType: SignalType | null,
+): { state: 'Suggested' | 'Implemented' | 'Off'; signalType: SignalType | null } {
+  const socket = endpoint.signalSockets?.[side]
+  if (!socket) {
+    return {
+      state: 'Suggested',
+      signalType: routeSuggestedType,
+    }
+  }
+
+  if (socket.state === 'Off') {
+    return {
+      state: 'Off',
+      signalType: null,
+    }
+  }
+
+  return {
+    state: socket.state,
+    signalType: socket.expectedType ?? routeSuggestedType,
+  }
+}
+
+function getSignalChannelColor(
+  state: 'Suggested' | 'Implemented' | 'Off',
+  signalType: SignalType | null,
+  configuredColor: string,
+): string {
+  if (state === 'Off') {
+    return '#334155'
+  }
+
+  if (signalType === 'Block' || signalType === 'Path') {
+    return configuredColor
+  }
+
+  return '#64748b'
+}
+
+function getSignalChannelSymbol(state: 'Suggested' | 'Implemented' | 'Off', signalType: SignalType | null): string {
+  if (state === 'Off') {
+    return 'x'
+  }
+
+  const typeText = signalType === 'Block' ? 'B' : signalType === 'Path' ? 'P' : '?'
+  const stateGlyph = state === 'Implemented' ? '■' : '○'
+  return `${stateGlyph}${typeText}`
 }
 
 function signalSocketRefKey(ref: SignalSocketRef): string {
@@ -594,7 +696,7 @@ type BoundsRect = {
 
 type DockSide = 'Top' | 'Right' | 'Bottom' | 'Left'
 
-type DockPanelSizeKey = 'workspacePanelSize' | 'stationSelectorSize'
+type DockPanelSizeKey = 'workspacePanelSize'
 
 function isVerticalDockSide(side: DockSide): boolean {
   return side === 'Left' || side === 'Right'
@@ -769,13 +871,15 @@ export function GridCanvas(): JSX.Element {
   const showDirectionalIndicators = displayToggles.showDirectionalIndicators
   const showValidationIcons = displayToggles.showValidationIcons
   const workspacePanelDock = (map.settings.editorState.panels.workspacePanelDock ?? 'Top') as DockSide
-  const stationSelectorDock = (map.settings.editorState.panels.stationSelectorDock ?? 'Top') as DockSide
   const workspacePanelSize = map.settings.editorState.panels.workspacePanelSize ?? 230
-  const stationSelectorSize = map.settings.editorState.panels.stationSelectorSize ?? 180
+  const showStationSelectorPanel = map.settings.editorState.panels.showStationSelectorPanel ?? true
   const workspacePanelVertical = isVerticalDockSide(workspacePanelDock)
-  const stationSelectorVertical = isVerticalDockSide(stationSelectorDock)
   const sectionLabelStyle = map.settings.labelStyles.section
   const intersectionLabelStyle = map.settings.labelStyles.intersection
+  const signalEndpointChannelStyle = map.settings.signalEndpointChannelStyle
+  const endpointChannelLength = Math.max(20, Math.min(280, Math.round(signalEndpointChannelStyle.length)))
+  const endpointChannelLineWidth = Math.max(6, Math.min(60, Math.round(signalEndpointChannelStyle.width)))
+  const endpointChannelColor = signalEndpointChannelStyle.color
   const worldMinX = contentBounds.minX
   const worldMaxX = contentBounds.maxX
   const worldMinY = contentBounds.minY
@@ -994,6 +1098,8 @@ export function GridCanvas(): JSX.Element {
     return grouped
   }, [map.sections])
 
+  const routeSignalSuggestions = useMemo(() => buildRouteSignalSuggestionMap(map), [map])
+
   const signalSocketPoints = useMemo(() => {
     const sockets: Array<{
       ref: SignalSocketRef
@@ -1004,6 +1110,7 @@ export function GridCanvas(): JSX.Element {
       endpointKey: SectionEndpointKey
       side: SectionEndpointSide
       signalType: 'Block' | 'Path' | null
+      socketState: 'Suggested' | 'Implemented' | 'Off'
     }> = []
 
     for (const section of map.sections) {
@@ -1015,6 +1122,8 @@ export function GridCanvas(): JSX.Element {
         for (const side of sides) {
           const ref: SignalSocketRef = { sectionId: section.id, endpointKey, side }
           const point = getSectionSignalSocketPoint(section, endpointKey, side)
+          const routeSuggestedType = routeSignalSuggestions.get(`${section.id}:${endpointKey}:${side}`) ?? null
+          const visualState = getSocketVisualState(endpoint, side, routeSuggestedType)
           sockets.push({
             ref,
             key: signalSocketRefKey(ref),
@@ -1023,14 +1132,15 @@ export function GridCanvas(): JSX.Element {
             sectionNumber: section.sectionNumber,
             endpointKey,
             side,
-            signalType: side === 'Left' ? endpoint.signal1 : endpoint.signal2,
+            signalType: visualState.signalType,
+            socketState: visualState.state,
           })
         }
       }
     }
 
     return sockets
-  }, [map.sections])
+  }, [map.sections, routeSignalSuggestions])
 
   const signalSocketLookup = useMemo(() => {
     const lookup: Record<string, { x: number; y: number; sectionNumber: number }> = {}
@@ -1427,7 +1537,7 @@ export function GridCanvas(): JSX.Element {
     })
   }
 
-  function updatePanelDock(key: 'workspacePanelDock' | 'stationSelectorDock', value: DockSide): void {
+  function updatePanelDock(key: 'workspacePanelDock', value: DockSide): void {
     updateMapSettings({
       editorState: {
         ...map.settings.editorState,
@@ -1444,7 +1554,7 @@ export function GridCanvas(): JSX.Element {
       return { min: 140, max: 760 }
     }
 
-    return { min: 120, max: 760 }
+    return { min: 140, max: 760 }
   }
 
   function updatePanelSize(key: DockPanelSizeKey, value: number): void {
@@ -1482,7 +1592,7 @@ export function GridCanvas(): JSX.Element {
     event.stopPropagation()
 
     const startPointer = isVerticalDockSide(dockSide) ? event.clientX : event.clientY
-    const startSize = key === 'workspacePanelSize' ? workspacePanelSize : stationSelectorSize
+    const startSize = workspacePanelSize
 
     dockPanelResizeRef.current = {
       key,
@@ -1537,7 +1647,7 @@ export function GridCanvas(): JSX.Element {
       document.body.classList.remove('is-resizing-panels-horizontal')
       document.body.classList.remove('is-resizing-panels-vertical')
     }
-  }, [stationSelectorSize, workspacePanelSize, map.settings.editorState, updateMapSettings, map.settings.editorState.panels])
+  }, [workspacePanelSize, map.settings.editorState, updateMapSettings, map.settings.editorState.panels])
 
   function renderDockedPanel(
     panel: JSX.Element,
@@ -2110,148 +2220,140 @@ export function GridCanvas(): JSX.Element {
   }
 
   const workspacePanel = (
-    <header className={workspacePanelVertical ? 'panel-header inline workspace-toolbar-panel dock-vertical' : 'panel-header inline workspace-toolbar-panel dock-horizontal'}>
-      <div>
-        <p className="eyebrow">Workspace</p>
-        <h2>{map.settings.title}</h2>
-      </div>
-      <div className="view-controls">
-        <HistoryToolbar cursorPosition={cursorWorldPosition} />
-        <div className="display-toggle-toolbar" aria-label="Display toggles">
-          <label>
-            <input
-              type="checkbox"
-              checked={showSectionLabels}
-              onChange={(event) => updateDisplayToggle('showSectionLabels', event.target.checked)}
-            />
-            <span>Section Labels</span>
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={showSignalEndpoints}
-              onChange={(event) => updateDisplayToggle('showSignalEndpoints', event.target.checked)}
-            />
-            <span>Signal Endpoints</span>
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={showDirectionalIndicators}
-              onChange={(event) => updateDisplayToggle('showDirectionalIndicators', event.target.checked)}
-            />
-            <span>Direction</span>
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={showValidationIcons}
-              onChange={(event) => updateDisplayToggle('showValidationIcons', event.target.checked)}
-            />
-            <span>Validation</span>
-          </label>
+    <section className={workspacePanelVertical ? 'panel-header inline workspace-toolbar-panel dock-vertical' : 'panel-header inline workspace-toolbar-panel dock-horizontal'}>
+      <div className="workspace-toolbar-main">
+        <div>
+          <p className="eyebrow">Workspace</p>
+          <h2>{map.settings.title}</h2>
         </div>
-        <div className="panel-dock-control">
-          <span>Workspace Dock</span>
-          <div className="panel-dock-button-group" role="group" aria-label="Workspace panel dock side">
-            {(['Top', 'Right', 'Bottom', 'Left'] as DockSide[]).map((side) => (
-              <button
-                key={`workspace-dock-${side}`}
-                type="button"
-                className={workspacePanelDock === side ? 'panel-dock-button active' : 'panel-dock-button'}
-                onClick={() => updatePanelDock('workspacePanelDock', side)}
-              >
-                {side.slice(0, 1)}
-              </button>
-            ))}
+        <div className="view-controls">
+          <HistoryToolbar cursorPosition={cursorWorldPosition} />
+          <div className={workspacePanelVertical ? 'display-toggle-toolbar flow-vertical' : 'display-toggle-toolbar flow-horizontal'} aria-label="Display toggles">
+            <label>
+              <input
+                type="checkbox"
+                checked={showSectionLabels}
+                onChange={(event) => updateDisplayToggle('showSectionLabels', event.target.checked)}
+              />
+              <span>Section Labels</span>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={showSignalEndpoints}
+                onChange={(event) => updateDisplayToggle('showSignalEndpoints', event.target.checked)}
+              />
+              <span>Signal Endpoints</span>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={showDirectionalIndicators}
+                onChange={(event) => updateDisplayToggle('showDirectionalIndicators', event.target.checked)}
+              />
+              <span>Direction</span>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={showValidationIcons}
+                onChange={(event) => updateDisplayToggle('showValidationIcons', event.target.checked)}
+              />
+              <span>Validation</span>
+            </label>
           </div>
-        </div>
-        <div className="panel-dock-control">
-          <span>Stations Dock</span>
-          <div className="panel-dock-button-group" role="group" aria-label="Station selector panel dock side">
-            {(['Top', 'Right', 'Bottom', 'Left'] as DockSide[]).map((side) => (
-              <button
-                key={`station-dock-${side}`}
-                type="button"
-                className={stationSelectorDock === side ? 'panel-dock-button active' : 'panel-dock-button'}
-                onClick={() => updatePanelDock('stationSelectorDock', side)}
-              >
-                {side.slice(0, 1)}
-              </button>
-            ))}
+          <div className="panel-dock-control">
+            <span>Workspace Dock</span>
+            <div className="panel-dock-button-group" role="group" aria-label="Workspace panel dock side">
+              {(['Top', 'Right', 'Bottom', 'Left'] as DockSide[]).map((side) => (
+                <button
+                  key={`workspace-dock-${side}`}
+                  type="button"
+                  className={workspacePanelDock === side ? 'panel-dock-button active' : 'panel-dock-button'}
+                  onClick={() => updatePanelDock('workspacePanelDock', side)}
+                >
+                  {side.slice(0, 1)}
+                </button>
+              ))}
+            </div>
           </div>
+          <label className="panel-size-control">
+            <span>Workspace Size</span>
+            <input
+              type="range"
+              min={140}
+              max={760}
+              step={10}
+              value={workspacePanelSize}
+              onChange={(event) => updatePanelSize('workspacePanelSize', Number(event.target.value))}
+            />
+          </label>
+          <button
+            type="button"
+            className="fit-button"
+            onClick={() => {
+              updateMapSettings({
+                editorState: {
+                  ...map.settings.editorState,
+                  panels: {
+                    ...map.settings.editorState.panels,
+                    showStationSelectorPanel: !showStationSelectorPanel,
+                  },
+                },
+              })
+            }}
+          >
+            {showStationSelectorPanel ? 'Hide Train Stations' : 'Show Train Stations'}
+          </button>
+          <button type="button" className="fit-button" onClick={fitToViewport}>
+            Fit View
+          </button>
+          <button
+            type="button"
+            className="fit-button"
+            onClick={fitToSelection}
+            disabled={!selectedEntityBounds}
+          >
+            Fit To Selection
+          </button>
+          <label className="zoom-control">
+            <span>Zoom</span>
+            <input
+              type="range"
+              min={0.1}
+              max={2.5}
+              step={0.1}
+              value={zoom}
+              onChange={(event) => setZoom(Number(event.target.value))}
+            />
+          </label>
         </div>
-        <label className="panel-size-control">
-          <span>Workspace Size</span>
-          <input
-            type="range"
-            min={140}
-            max={760}
-            step={10}
-            value={workspacePanelSize}
-            onChange={(event) => updatePanelSize('workspacePanelSize', Number(event.target.value))}
-          />
-        </label>
-        <label className="panel-size-control">
-          <span>Stations Size</span>
-          <input
-            type="range"
-            min={120}
-            max={760}
-            step={10}
-            value={stationSelectorSize}
-            onChange={(event) => updatePanelSize('stationSelectorSize', Number(event.target.value))}
-          />
-        </label>
-        <button type="button" className="fit-button" onClick={fitToViewport}>
-          Fit View
-        </button>
-        <button
-          type="button"
-          className="fit-button"
-          onClick={fitToSelection}
-          disabled={!selectedEntityBounds}
-        >
-          Fit To Selection
-        </button>
-        <label className="zoom-control">
-          <span>Zoom</span>
-          <input
-            type="range"
-            min={0.1}
-            max={2.5}
-            step={0.1}
-            value={zoom}
-            onChange={(event) => setZoom(Number(event.target.value))}
-          />
-        </label>
       </div>
-    </header>
-  )
-
-  const stationSelectorPanel = (
-    <section className={stationSelectorVertical ? 'workspace-station-strip dock-vertical' : 'workspace-station-strip dock-horizontal'} aria-label="Station quick navigation">
-      <p className="workspace-station-strip-title">Train Stations</p>
-      <div className="workspace-station-strip-list" role="list">
-        {orderedStations.map((station) => {
-          const isSelected = selectedEntity?.entityType === 'station' && selectedEntity.id === station.id
-          return (
-            <button
-              key={station.id}
-              type="button"
-              role="listitem"
-              className={isSelected ? 'workspace-station-chip active' : 'workspace-station-chip'}
-              onClick={() => centerOnStation(station)}
-              title={`Center and select ${station.stationName}`}
-            >
-              {`#${station.stationNumber} ${station.stationName}`}
-            </button>
-          )
-        })}
-        {orderedStations.length === 0 && (
-          <p className="workspace-station-empty">No stations on this map yet.</p>
-        )}
-      </div>
+      {showStationSelectorPanel ? (
+        <section className={workspacePanelVertical ? 'workspace-station-strip dock-vertical' : 'workspace-station-strip dock-horizontal'} aria-label="Station quick navigation">
+          <p className="workspace-station-strip-title">Train Stations</p>
+          <div className="workspace-station-strip-list" role="list">
+            {orderedStations.map((station) => {
+              const isSelected = selectedEntity?.entityType === 'station' && selectedEntity.id === station.id
+              return (
+                <button
+                  key={station.id}
+                  type="button"
+                  role="listitem"
+                  className={isSelected ? 'workspace-station-chip active' : 'workspace-station-chip'}
+                  onClick={() => centerOnStation(station)}
+                  title={`Center and select ${station.stationName}`}
+                >
+                  {`#${station.stationNumber} ${station.stationName}`}
+                </button>
+              )
+            })}
+            {orderedStations.length === 0 && (
+              <p className="workspace-station-empty">No stations on this map yet.</p>
+            )}
+          </div>
+        </section>
+      ) : null}
     </section>
   )
 
@@ -2262,17 +2364,11 @@ export function GridCanvas(): JSX.Element {
           {workspacePanelDock === 'Top' && (
             renderDockedPanel(workspacePanel, 'workspacePanelSize', 'Top', workspacePanelSize, 'Workspace')
           )}
-          {stationSelectorDock === 'Top' && (
-            renderDockedPanel(stationSelectorPanel, 'stationSelectorSize', 'Top', stationSelectorSize, 'Train Stations')
-          )}
         </div>
         <div className="grid-panel-middle">
           <div className="grid-panel-dock grid-panel-dock-left">
             {workspacePanelDock === 'Left' && (
               renderDockedPanel(workspacePanel, 'workspacePanelSize', 'Left', workspacePanelSize, 'Workspace')
-            )}
-            {stationSelectorDock === 'Left' && (
-              renderDockedPanel(stationSelectorPanel, 'stationSelectorSize', 'Left', stationSelectorSize, 'Train Stations')
             )}
           </div>
           <div className="canvas-wrap" ref={containerRef}>
@@ -2377,7 +2473,13 @@ export function GridCanvas(): JSX.Element {
                 const isSelected = selectedEntity?.entityType === 'section' && selectedEntity.id === section.id
                 const isHovered = hoveredSectionId === section.id
                 const isCurved = section.sectionKind === 'Curved'
-                const sectionLabelText = section.sectionName.trim() || String(section.sectionNumber)
+                const renderEndpoint1 = getSectionRenderEndpoint(section, 'endpoint1', endpointChannelLength)
+                const renderEndpoint2 = getSectionRenderEndpoint(section, 'endpoint2', endpointChannelLength)
+                const sectionName = section.sectionName.trim()
+                const defaultSectionName = `Section ${section.sectionNumber}`
+                const sectionLabelText = sectionName !== '' && sectionName !== defaultSectionName
+                  ? sectionName
+                  : String(section.sectionNumber)
                 const reviewState = connectionReview.sectionConnectivity[section.id]
                 const signalReviewState = connectionReview.sectionSignalConnectivity[section.id]
                 const validationStroke =
@@ -2394,41 +2496,40 @@ export function GridCanvas(): JSX.Element {
                       : signalReviewState?.status === 'ok'
                         ? '#22c55e'
                         : '#64748b'
-                const signalBadgeText =
-                  signalReviewState?.status === 'invalid'
-                    ? '×'
-                    : signalReviewState?.status === 'partial'
-                      ? '!'
-                      : signalReviewState?.status === 'ok'
-                        ? 'S'
-                        : '?'
+                const signalBadgeState =
+                  signalReviewState?.status === 'ok' && (signalReviewState.requiredSignals ?? 0) > 0
+                    ? 'Implemented'
+                    : 'Suggested'
+                const signalBadgeText = signalBadgeState === 'Implemented' ? 'I' : 'S'
                 const directionDescriptor = getSectionDirectionDescriptor(section)
                 const directionArrowMarkers = getSectionDirectionArrowMarkers(section)
-                const chordX = section.endpoint2.coordinate.x - section.endpoint1.coordinate.x
-                const chordY = section.endpoint2.coordinate.y - section.endpoint1.coordinate.y
+                const chordX = renderEndpoint2.x - renderEndpoint1.x
+                const chordY = renderEndpoint2.y - renderEndpoint1.y
                 const chordLength = Math.max(1, Math.sqrt(chordX * chordX + chordY * chordY))
                 const normalX = -chordY / chordLength
                 const normalY = chordX / chordLength
                 const midpointX = (section.endpoint1.coordinate.x + section.endpoint2.coordinate.x) / 2
                 const midpointY = (section.endpoint1.coordinate.y + section.endpoint2.coordinate.y) / 2
+                const renderMidpointX = (renderEndpoint1.x + renderEndpoint2.x) / 2
+                const renderMidpointY = (renderEndpoint1.y + renderEndpoint2.y) / 2
                 const curveControlX = midpointX + normalX * section.curveBend
                 const curveControlY = midpointY + normalY * section.curveBend
-                const labelX = isCurved ? curveControlX + normalX * 18 : midpointX
-                const labelY = isCurved ? curveControlY + normalY * 18 : midpointY
+                const labelX = isCurved ? curveControlX + normalX * 18 : renderMidpointX
+                const labelY = isCurved ? curveControlY + normalY * 18 : renderMidpointY
                 const localPoints = isCurved
                   ? [
-                      section.endpoint1.coordinate.x - midpointX,
-                      section.endpoint1.coordinate.y - midpointY,
-                      normalX * section.curveBend,
-                      normalY * section.curveBend,
-                      section.endpoint2.coordinate.x - midpointX,
-                      section.endpoint2.coordinate.y - midpointY,
+                      renderEndpoint1.x - midpointX,
+                      renderEndpoint1.y - midpointY,
+                      curveControlX - midpointX,
+                      curveControlY - midpointY,
+                      renderEndpoint2.x - midpointX,
+                      renderEndpoint2.y - midpointY,
                     ]
                   : [
-                      section.endpoint1.coordinate.x - midpointX,
-                      section.endpoint1.coordinate.y - midpointY,
-                      section.endpoint2.coordinate.x - midpointX,
-                      section.endpoint2.coordinate.y - midpointY,
+                      renderEndpoint1.x - midpointX,
+                      renderEndpoint1.y - midpointY,
+                      renderEndpoint2.x - midpointX,
+                      renderEndpoint2.y - midpointY,
                     ]
 
                 return (
@@ -2526,7 +2627,11 @@ export function GridCanvas(): JSX.Element {
                     )}
                     {showValidationIcons && (
                       <Group x={labelX - midpointX - 18} y={labelY - midpointY + 14} listening={false}>
-                        <Circle radius={8} fill={signalBadgeColor} stroke="#0f172a" strokeWidth={1} />
+                        {signalBadgeState === 'Implemented' ? (
+                          <Rect x={-8} y={-8} width={16} height={16} cornerRadius={3} fill={signalBadgeColor} stroke="#0f172a" strokeWidth={1} />
+                        ) : (
+                          <Circle radius={8} fill={signalBadgeColor} stroke="#0f172a" strokeWidth={1} />
+                        )}
                         <Text
                           x={-6}
                           y={-5}
@@ -2715,51 +2820,95 @@ export function GridCanvas(): JSX.Element {
                   {map.sections.map((section) => {
                     const endpointKeys: SectionEndpointKey[] = ['endpoint1', 'endpoint2']
                     return endpointKeys.map((endpointKey) => {
-                      const leftPoint = getSectionSignalSocketPoint(section, endpointKey, 'Left')
-                      const rightPoint = getSectionSignalSocketPoint(section, endpointKey, 'Right')
+                      const endpoint = endpointKey === 'endpoint1' ? section.endpoint1 : section.endpoint2
+                      const angle = getSectionEndpointChannelAngle(section, endpointKey)
+                      const leftRouteType = routeSignalSuggestions.get(`${section.id}:${endpointKey}:Left`) ?? null
+                      const rightRouteType = routeSignalSuggestions.get(`${section.id}:${endpointKey}:Right`) ?? null
+                      const leftState = getSocketVisualState(endpoint, 'Left', leftRouteType)
+                      const rightState = getSocketVisualState(endpoint, 'Right', rightRouteType)
+
+                      const segmentLength = endpointChannelLength
+                      const channelThickness = endpointChannelLineWidth
+                      const segmentThickness = channelThickness * 3
+                      const segmentStartX = 0
+                      const leftChannelColor = getSignalChannelColor(leftState.state, leftState.signalType, endpointChannelColor)
+                      const rightChannelColor = getSignalChannelColor(rightState.state, rightState.signalType, endpointChannelColor)
+
                       return (
-                        <Line
+                        <Group
                           key={`socket-bar-${section.id}-${endpointKey}`}
-                          points={[leftPoint.x, leftPoint.y, rightPoint.x, rightPoint.y]}
-                          stroke="#ffffff"
-                          strokeWidth={1.2}
-                          opacity={0.9}
-                        />
+                          x={endpoint.coordinate.x}
+                          y={endpoint.coordinate.y}
+                          rotation={toDegrees(angle)}
+                        >
+                          <Rect
+                            x={segmentStartX}
+                            y={-segmentThickness / 2}
+                            width={segmentLength}
+                            height={segmentThickness}
+                            cornerRadius={6}
+                            fill={section.color}
+                            opacity={0.95}
+                          />
+                          <Rect
+                            x={segmentStartX}
+                            y={-segmentThickness / 2}
+                            width={segmentLength}
+                            height={channelThickness}
+                            fill={leftChannelColor}
+                            opacity={0.95}
+                          />
+                          <Rect
+                            x={segmentStartX}
+                            y={-channelThickness / 2}
+                            width={segmentLength}
+                            height={channelThickness}
+                            fill="#1e293b"
+                            opacity={0.96}
+                          />
+                          <Rect
+                            x={segmentStartX}
+                            y={segmentThickness / 2 - channelThickness}
+                            width={segmentLength}
+                            height={channelThickness}
+                            fill={rightChannelColor}
+                            opacity={0.95}
+                          />
+                          <Rect
+                            x={segmentStartX}
+                            y={-segmentThickness / 2}
+                            width={segmentLength}
+                            height={segmentThickness}
+                            cornerRadius={6}
+                            stroke="#0f172a"
+                            strokeWidth={1}
+                          />
+                          <Text
+                            x={4}
+                            y={-segmentThickness / 2 + 0.5}
+                            width={segmentLength - 8}
+                            height={channelThickness}
+                            align="center"
+                            verticalAlign="middle"
+                            text={getSignalChannelSymbol(leftState.state, leftState.signalType)}
+                            fontSize={12}
+                            fill="#ffffff"
+                          />
+                          <Text
+                            x={4}
+                            y={segmentThickness / 2 - channelThickness + 0.5}
+                            width={segmentLength - 8}
+                            height={channelThickness}
+                            align="center"
+                            verticalAlign="middle"
+                            text={getSignalChannelSymbol(rightState.state, rightState.signalType)}
+                            fontSize={12}
+                            fill="#ffffff"
+                          />
+                        </Group>
                       )
                     })
                   })}
-
-                  {!isRepositioning && signalSocketPoints.map((socket) => (
-                    <Circle
-                      key={`signal-socket-${socket.key}`}
-                      x={socket.x}
-                      y={socket.y}
-                      radius={4.8}
-                      fill={
-                        socket.signalType === 'Block'
-                          ? '#0ea5e9'
-                          : socket.signalType === 'Path'
-                            ? '#f97316'
-                            : '#64748b'
-                      }
-                      stroke="#0f172a"
-                      strokeWidth={0.9}
-                      opacity={0.9}
-                    />
-                  ))}
-
-                  {!isRepositioning && signalSocketPoints.map((socket) => (
-                    <Text
-                      key={`signal-socket-type-${socket.key}`}
-                      x={socket.x - 5}
-                      y={socket.y - 4}
-                      width={10}
-                      align="center"
-                      text={socket.signalType === 'Block' ? 'B' : socket.signalType === 'Path' ? 'P' : ''}
-                      fontSize={7}
-                      fill="#ffffff"
-                    />
-                  ))}
                 </Group>
               )}
 
@@ -3603,17 +3752,11 @@ export function GridCanvas(): JSX.Element {
             {workspacePanelDock === 'Right' && (
               renderDockedPanel(workspacePanel, 'workspacePanelSize', 'Right', workspacePanelSize, 'Workspace')
             )}
-            {stationSelectorDock === 'Right' && (
-              renderDockedPanel(stationSelectorPanel, 'stationSelectorSize', 'Right', stationSelectorSize, 'Train Stations')
-            )}
           </div>
         </div>
         <div className="grid-panel-dock grid-panel-dock-bottom">
           {workspacePanelDock === 'Bottom' && (
             renderDockedPanel(workspacePanel, 'workspacePanelSize', 'Bottom', workspacePanelSize, 'Workspace')
-          )}
-          {stationSelectorDock === 'Bottom' && (
-            renderDockedPanel(stationSelectorPanel, 'stationSelectorSize', 'Bottom', stationSelectorSize, 'Train Stations')
           )}
         </div>
       </div>

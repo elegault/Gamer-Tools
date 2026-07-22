@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type JSX } from 'react'
+import { useEffect, useMemo, useState, type JSX } from 'react'
 import { useEditorStore } from '../store/editorStore'
 import type {
   Intersection,
@@ -14,19 +14,8 @@ import type {
 import {
   buildConnectionReview,
   buildJunctionMetadata,
+  buildRouteSignalSuggestionMap,
 } from '../models/connectionReview'
-
-function download(filename: string, data: string): void {
-  const blob = new Blob([data], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  anchor.click()
-
-  URL.revokeObjectURL(url)
-}
 
 function toNumber(value: string): number {
   const parsed = Number(value)
@@ -62,14 +51,17 @@ function renderSelectOptions(values: readonly string[]): JSX.Element[] {
 }
 
 function getSectionDisplayLabel(section: Pick<RailwaySection, 'sectionName' | 'sectionNumber'>): string {
-  const sectionName = section.sectionName.trim() || `Section ${section.sectionNumber}`
-  return sectionName
+  const sectionName = section.sectionName.trim()
+  const defaultSectionName = `Section ${section.sectionNumber}`
+  return sectionName !== '' && sectionName !== defaultSectionName
+    ? sectionName
+    : String(section.sectionNumber)
 }
 
 const freightStationTypes = ['Freight', 'Liquid'] as const
 const freightModes = ['Load', 'Unload'] as const
 const signalTypes = ['Block', 'Path'] as const
-const signalSocketStates = ['Suggested', 'Implemented', 'Removed', 'Overridden'] as const
+const signalSocketStates = ['Suggested', 'Implemented', 'Off'] as const
 const sectionKinds = ['Straight', 'Curved'] as const
 
 function getDerivedEntranceMode(
@@ -92,41 +84,50 @@ function getDerivedEntranceMode(
 type EndpointSignalSocketState = {
   state: SignalSocketState
   expectedType: SignalType | null
-  overrideType: SignalType | null
 }
 
 function getEndpointSignalSocketState(
   endpoint: RailwaySection['endpoint1'],
   side: 'Left' | 'Right',
+  routeSuggestedType: SignalType | null = null,
 ): EndpointSignalSocketState {
-  const legacySignalType = side === 'Left' ? endpoint.signal1 : endpoint.signal2
   const socket = endpoint.signalSockets?.[side]
 
   if (!socket) {
     return {
       state: 'Suggested',
-      expectedType: legacySignalType,
-      overrideType: null,
+      expectedType: routeSuggestedType,
     }
   }
 
   return {
     state: socket.state,
-    expectedType: socket.expectedType ?? legacySignalType,
-    overrideType: socket.overrideType,
+    expectedType: socket.expectedType ?? routeSuggestedType,
   }
 }
 
-function getEffectiveSignalType(socket: EndpointSignalSocketState): SignalType | null {
-  if (socket.state === 'Removed') {
-    return null
+function getSignalSocketGlyph(socket: EndpointSignalSocketState): string {
+  if (socket.state === 'Implemented') {
+    return '■'
   }
 
-  if (socket.state === 'Overridden') {
-    return socket.overrideType
+  if (socket.state === 'Off') {
+    return '×'
   }
 
-  return socket.expectedType
+  return '○'
+}
+
+function getSignalSocketHint(socket: EndpointSignalSocketState): string {
+  if (socket.state === 'Implemented') {
+    return 'Implemented signal placement'
+  }
+
+  if (socket.state === 'Off') {
+    return 'Signal turned off'
+  }
+
+  return 'Route-aware suggestion'
 }
 
 function getSectionEndpointConnectionDisplay(
@@ -653,10 +654,30 @@ function SectionEditor({
   )
   const derivedEndpoint1EntranceMode = getDerivedEntranceMode(section.directionMode, 'endpoint1')
   const derivedEndpoint2EntranceMode = getDerivedEntranceMode(section.directionMode, 'endpoint2')
-  const endpoint1SignalLeft = getEndpointSignalSocketState(section.endpoint1, 'Left')
-  const endpoint1SignalRight = getEndpointSignalSocketState(section.endpoint1, 'Right')
-  const endpoint2SignalLeft = getEndpointSignalSocketState(section.endpoint2, 'Left')
-  const endpoint2SignalRight = getEndpointSignalSocketState(section.endpoint2, 'Right')
+  const routeSignalSuggestions = useMemo(() => buildRouteSignalSuggestionMap(map), [map])
+  const getRouteSuggestion = (endpointKey: 'endpoint1' | 'endpoint2', side: 'Left' | 'Right') =>
+    routeSignalSuggestions.get(`${section.id}:${endpointKey}:${side}`) ?? null
+
+  const endpoint1SignalLeft = getEndpointSignalSocketState(
+    section.endpoint1,
+    'Left',
+    getRouteSuggestion('endpoint1', 'Left'),
+  )
+  const endpoint1SignalRight = getEndpointSignalSocketState(
+    section.endpoint1,
+    'Right',
+    getRouteSuggestion('endpoint1', 'Right'),
+  )
+  const endpoint2SignalLeft = getEndpointSignalSocketState(
+    section.endpoint2,
+    'Left',
+    getRouteSuggestion('endpoint2', 'Left'),
+  )
+  const endpoint2SignalRight = getEndpointSignalSocketState(
+    section.endpoint2,
+    'Right',
+    getRouteSuggestion('endpoint2', 'Right'),
+  )
 
   function updateEndpointSignalSocket(
     endpointKey: 'endpoint1' | 'endpoint2',
@@ -668,29 +689,21 @@ function SectionEditor({
     const nextSocket: EndpointSignalSocketState = {
       state: next.state ?? currentSocket.state,
       expectedType: next.expectedType === undefined ? currentSocket.expectedType : next.expectedType,
-      overrideType: next.overrideType === undefined ? currentSocket.overrideType : next.overrideType,
     }
 
-    if (nextSocket.state === 'Removed') {
-      nextSocket.overrideType = null
+    if (nextSocket.state === 'Off') {
+      nextSocket.expectedType = nextSocket.expectedType ?? currentSocket.expectedType
     }
 
-    if (nextSocket.state !== 'Overridden') {
-      nextSocket.overrideType = null
-    }
-
-    const effectiveType = getEffectiveSignalType(nextSocket)
     const nextEndpoint = {
       ...endpoint,
       signalSockets: {
         ...(endpoint.signalSockets ?? {
-          Left: { state: 'Suggested', expectedType: null, overrideType: null },
-          Right: { state: 'Suggested', expectedType: null, overrideType: null },
+          Left: { state: 'Suggested', expectedType: null },
+          Right: { state: 'Suggested', expectedType: null },
         }),
         [side]: nextSocket,
       },
-      signal1: side === 'Left' ? effectiveType : endpoint.signal1,
-      signal2: side === 'Right' ? effectiveType : endpoint.signal2,
     }
 
     if (endpointKey === 'endpoint1') {
@@ -890,7 +903,8 @@ function SectionEditor({
             <input type="number" value={section.endpoint1.coordinate.y} readOnly />
           </label>
           <label>
-            <span>Left Signal State</span>
+            <span>Left Signal State {getSignalSocketGlyph(endpoint1SignalLeft)}</span>
+            <small className="signal-socket-hint">{getSignalSocketHint(endpoint1SignalLeft)}</small>
             <select
               value={endpoint1SignalLeft.state}
               onChange={(event) =>
@@ -903,23 +917,14 @@ function SectionEditor({
             </select>
           </label>
           <label>
-            <span>Left Signal Type</span>
+            <span>Left Build Mode Signal Type</span>
             <select
-              value={
-                endpoint1SignalLeft.state === 'Overridden'
-                  ? endpoint1SignalLeft.overrideType ?? ''
-                  : endpoint1SignalLeft.expectedType ?? ''
-              }
-              disabled={endpoint1SignalLeft.state === 'Removed'}
+              value={endpoint1SignalLeft.expectedType ?? ''}
+              disabled={endpoint1SignalLeft.state === 'Off'}
               onChange={(event) =>
-                updateEndpointSignalSocket('endpoint1', 'Left',
-                  endpoint1SignalLeft.state === 'Overridden'
-                    ? {
-                      overrideType: event.target.value === '' ? null : (event.target.value as SignalType),
-                    }
-                    : {
-                      expectedType: event.target.value === '' ? null : (event.target.value as SignalType),
-                    })
+                updateEndpointSignalSocket('endpoint1', 'Left', {
+                  expectedType: event.target.value === '' ? null : (event.target.value as SignalType),
+                })
               }
             >
               <option value="">None</option>
@@ -927,7 +932,8 @@ function SectionEditor({
             </select>
           </label>
           <label>
-            <span>Right Signal State</span>
+            <span>Right Signal State {getSignalSocketGlyph(endpoint1SignalRight)}</span>
+            <small className="signal-socket-hint">{getSignalSocketHint(endpoint1SignalRight)}</small>
             <select
               value={endpoint1SignalRight.state}
               onChange={(event) =>
@@ -940,23 +946,14 @@ function SectionEditor({
             </select>
           </label>
           <label>
-            <span>Right Signal Type</span>
+            <span>Right Build Mode Signal Type</span>
             <select
-              value={
-                endpoint1SignalRight.state === 'Overridden'
-                  ? endpoint1SignalRight.overrideType ?? ''
-                  : endpoint1SignalRight.expectedType ?? ''
-              }
-              disabled={endpoint1SignalRight.state === 'Removed'}
+              value={endpoint1SignalRight.expectedType ?? ''}
+              disabled={endpoint1SignalRight.state === 'Off'}
               onChange={(event) =>
-                updateEndpointSignalSocket('endpoint1', 'Right',
-                  endpoint1SignalRight.state === 'Overridden'
-                    ? {
-                      overrideType: event.target.value === '' ? null : (event.target.value as SignalType),
-                    }
-                    : {
-                      expectedType: event.target.value === '' ? null : (event.target.value as SignalType),
-                    })
+                updateEndpointSignalSocket('endpoint1', 'Right', {
+                  expectedType: event.target.value === '' ? null : (event.target.value as SignalType),
+                })
               }
             >
               <option value="">None</option>
@@ -986,7 +983,8 @@ function SectionEditor({
             <input type="number" value={section.endpoint2.coordinate.y} readOnly />
           </label>
           <label>
-            <span>Left Signal State</span>
+            <span>Left Signal State {getSignalSocketGlyph(endpoint2SignalLeft)}</span>
+            <small className="signal-socket-hint">{getSignalSocketHint(endpoint2SignalLeft)}</small>
             <select
               value={endpoint2SignalLeft.state}
               onChange={(event) =>
@@ -999,23 +997,14 @@ function SectionEditor({
             </select>
           </label>
           <label>
-            <span>Left Signal Type</span>
+            <span>Left Build Mode Signal Type</span>
             <select
-              value={
-                endpoint2SignalLeft.state === 'Overridden'
-                  ? endpoint2SignalLeft.overrideType ?? ''
-                  : endpoint2SignalLeft.expectedType ?? ''
-              }
-              disabled={endpoint2SignalLeft.state === 'Removed'}
+              value={endpoint2SignalLeft.expectedType ?? ''}
+              disabled={endpoint2SignalLeft.state === 'Off'}
               onChange={(event) =>
-                updateEndpointSignalSocket('endpoint2', 'Left',
-                  endpoint2SignalLeft.state === 'Overridden'
-                    ? {
-                      overrideType: event.target.value === '' ? null : (event.target.value as SignalType),
-                    }
-                    : {
-                      expectedType: event.target.value === '' ? null : (event.target.value as SignalType),
-                    })
+                updateEndpointSignalSocket('endpoint2', 'Left', {
+                  expectedType: event.target.value === '' ? null : (event.target.value as SignalType),
+                })
               }
             >
               <option value="">None</option>
@@ -1023,7 +1012,8 @@ function SectionEditor({
             </select>
           </label>
           <label>
-            <span>Right Signal State</span>
+            <span>Right Signal State {getSignalSocketGlyph(endpoint2SignalRight)}</span>
+            <small className="signal-socket-hint">{getSignalSocketHint(endpoint2SignalRight)}</small>
             <select
               value={endpoint2SignalRight.state}
               onChange={(event) =>
@@ -1036,23 +1026,14 @@ function SectionEditor({
             </select>
           </label>
           <label>
-            <span>Right Signal Type</span>
+            <span>Right Build Mode Signal Type</span>
             <select
-              value={
-                endpoint2SignalRight.state === 'Overridden'
-                  ? endpoint2SignalRight.overrideType ?? ''
-                  : endpoint2SignalRight.expectedType ?? ''
-              }
-              disabled={endpoint2SignalRight.state === 'Removed'}
+              value={endpoint2SignalRight.expectedType ?? ''}
+              disabled={endpoint2SignalRight.state === 'Off'}
               onChange={(event) =>
-                updateEndpointSignalSocket('endpoint2', 'Right',
-                  endpoint2SignalRight.state === 'Overridden'
-                    ? {
-                      overrideType: event.target.value === '' ? null : (event.target.value as SignalType),
-                    }
-                    : {
-                      expectedType: event.target.value === '' ? null : (event.target.value as SignalType),
-                    })
+                updateEndpointSignalSocket('endpoint2', 'Right', {
+                  expectedType: event.target.value === '' ? null : (event.target.value as SignalType),
+                })
               }
             >
               <option value="">None</option>
@@ -1316,8 +1297,6 @@ export function Inspector({
 }): JSX.Element {
   const map = useEditorStore((state) => state.map)
   const selectedEntity = useEditorStore((state) => state.selectedEntity)
-  const updateMapTitle = useEditorStore((state) => state.updateMapTitle)
-  const updateGridSize = useEditorStore((state) => state.updateGridSize)
   const updateStation = useEditorStore((state) => state.updateStation)
   const moveStation = useEditorStore((state) => state.moveStation)
   const updateSection = useEditorStore((state) => state.updateSection)
@@ -1333,9 +1312,6 @@ export function Inspector({
   const beginHistoryBatch = useEditorStore((state) => state.beginHistoryBatch)
   const commitHistoryBatch = useEditorStore((state) => state.commitHistoryBatch)
   const deleteSelected = useEditorStore((state) => state.deleteSelected)
-  const exportMap = useEditorStore((state) => state.exportMap)
-  const loadFromDisk = useEditorStore((state) => state.loadFromDisk)
-  const clearMap = useEditorStore((state) => state.clearMap)
   const relocateSelected = useEditorStore((state) => state.relocateSelected)
   const runConnectionAutoFix = useEditorStore((state) => state.runConnectionAutoFix)
   const getSectionConnectivityGraph = useEditorStore((state) => state.getSectionConnectivityGraph)
@@ -1512,21 +1488,6 @@ export function Inspector({
     setRelocateY(String(Math.round(selectedAnchor.y)))
   }, [selectedAnchor?.x, selectedAnchor?.y])
 
-  async function handleImport(event: ChangeEvent<HTMLInputElement>): Promise<void> {
-    const file = event.target.files?.[0]
-    if (!file) {
-      return
-    }
-
-    const text = await file.text()
-    const result = loadFromDisk(text)
-    if (!result.ok) {
-      alert(result.message)
-    }
-
-    event.currentTarget.value = ''
-  }
-
   return (
     <aside className={collapsed ? 'inspector collapsed-panel' : 'inspector'}>
       <header className="panel-header">
@@ -1547,96 +1508,6 @@ export function Inspector({
 
       {!collapsed && (
         <div className="panel-body">
-          <section className="inspector-section-card">
-            <button
-              type="button"
-              className="inspector-section-header"
-              onClick={() => toggleSection('mapUi')}
-              aria-expanded={!collapsedSections.mapUi}
-            >
-              <span>Map Title and UI Settings</span>
-              <span className="inspector-section-toggle">{collapsedSections.mapUi ? '+' : '−'}</span>
-            </button>
-
-            {!collapsedSections.mapUi && (
-              <div className="inspector-section-body">
-                <div className="form-grid">
-                  <label>
-                    <span>Map Title</span>
-                    <input
-                      type="text"
-                      value={map.settings.title}
-                      onChange={(event) => updateMapTitle(event.target.value)}
-                    />
-                  </label>
-                </div>
-
-                <section className="ui-settings">
-                  <h3>UI Settings</h3>
-                  <div className="form-grid compact-grid">
-                    <label>
-                      <span>Grid Width</span>
-                      <input
-                        type="number"
-                        min={10}
-                        value={map.settings.worldWidth}
-                        onChange={(event) =>
-                          updateGridSize(Number(event.target.value), map.settings.worldHeight)
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>Grid Height</span>
-                      <input
-                        type="number"
-                        min={10}
-                        value={map.settings.worldHeight}
-                        onChange={(event) =>
-                          updateGridSize(map.settings.worldWidth, Number(event.target.value))
-                        }
-                      />
-                    </label>
-                  </div>
-                </section>
-
-                <div className="io-actions">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const data = exportMap()
-                      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-                      download(`stm-map-${stamp}.json`, data)
-                    }}
-                  >
-                    Export JSON
-                  </button>
-
-                  <button
-                    type="button"
-                    className="danger-button"
-                    onClick={() => {
-                      const confirmed = window.confirm(
-                        'Clear the current map and saved local map data? This cannot be undone.',
-                      )
-                      if (!confirmed) {
-                        return
-                      }
-
-                      clearMap()
-                    }}
-                  >
-                    Clear Grid / Save
-                  </button>
-
-                  <label className="file-import">
-                    <span>Import JSON</span>
-                    <input type="file" accept="application/json" onChange={handleImport} />
-                  </label>
-                </div>
-              </div>
-            )}
-          </section>
-
           <section className="inspector-section-card">
             <button
               type="button"
@@ -1773,6 +1644,11 @@ export function Inspector({
             {!collapsedSections.review && (
               <div className="inspector-section-body">
                 <p>
+                  Route-aware review of connectivity and signal placements. Suggestions are derived from the latest map layout and can be
+                  confirmed, implemented, or turned off per endpoint side.
+                </p>
+
+                <p>
                   Issues: {connectionReview.issues.length} ({connectionReview.issues.filter((item) => item.severity === 'error').length} errors,{' '}
                   {connectionReview.issues.filter((item) => item.severity === 'warning').length} warnings)
                 </p>
@@ -1785,12 +1661,16 @@ export function Inspector({
                       setLastAutoFixCount(count)
                     }}
                   >
-                    Auto-fix Metadata
+                    Recalculate Route Suggestions
                   </button>
                 </div>
 
                 {lastAutoFixCount !== null && (
-                  <p>{lastAutoFixCount > 0 ? `Applied ${lastAutoFixCount} metadata fixes.` : 'No metadata fixes were needed.'}</p>
+                  <p>
+                    {lastAutoFixCount > 0
+                      ? `Applied ${lastAutoFixCount} route suggestion updates.`
+                      : 'No route suggestion updates were needed.'}
+                  </p>
                 )}
 
                 <div className="review-issues-list">

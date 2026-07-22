@@ -1,4 +1,5 @@
-import type { MapDocument } from './mapSchema'
+import type { MapDocument, SignalType } from './mapSchema'
+import { buildSectionConnectivityGraph } from './sectionGraph'
 
 type SectionEndpointKey = 'endpoint1' | 'endpoint2'
 type SectionEndpointSide = 'Left' | 'Right'
@@ -103,22 +104,17 @@ function getEndpointSignalType(
   side: SectionEndpointSide,
 ): 'Block' | 'Path' | null {
   const endpoint = endpointKey === 'endpoint1' ? section.endpoint1 : section.endpoint2
-  const legacyType = side === 'Left' ? endpoint.signal1 : endpoint.signal2
   const socket = endpoint.signalSockets?.[side]
 
   if (!socket) {
-    return legacyType
-  }
-
-  if (socket.state === 'Removed') {
     return null
   }
 
-  if (socket.state === 'Overridden') {
-    return socket.overrideType
+  if (socket.state === 'Off') {
+    return null
   }
 
-  return socket.expectedType ?? legacyType
+  return socket.expectedType
 }
 
 function getEndpointSignalSocketState(
@@ -126,27 +122,73 @@ function getEndpointSignalSocketState(
   endpointKey: SectionEndpointKey,
   side: SectionEndpointSide,
 ): {
-  state: 'Suggested' | 'Implemented' | 'Removed' | 'Overridden'
+  state: 'Suggested' | 'Implemented' | 'Off'
   expectedType: 'Block' | 'Path' | null
-  overrideType: 'Block' | 'Path' | null
 } {
   const endpoint = endpointKey === 'endpoint1' ? section.endpoint1 : section.endpoint2
-  const legacyType = side === 'Left' ? endpoint.signal1 : endpoint.signal2
   const socket = endpoint.signalSockets?.[side]
 
   if (!socket) {
     return {
-      state: legacyType ? 'Suggested' : 'Suggested',
-      expectedType: legacyType,
-      overrideType: null,
+      state: 'Suggested',
+      expectedType: null,
     }
   }
 
   return {
     state: socket.state,
-    expectedType: socket.expectedType ?? legacyType,
-    overrideType: socket.overrideType,
+    expectedType: socket.expectedType,
   }
+}
+
+function getRouteSuggestedSignalType(
+  map: Pick<MapDocument, 'sections' | 'stations'>,
+  section: MapDocument['sections'][number],
+  endpointKey: SectionEndpointKey,
+  side: SectionEndpointSide,
+  endpointGroups: Record<string, Array<{ sectionId: string; endpointKey: SectionEndpointKey }>>,
+  graph: ReturnType<typeof buildSectionConnectivityGraph>,
+): SignalType | null {
+  const endpoint = endpointKey === 'endpoint1' ? section.endpoint1 : section.endpoint2
+  const coordinateKey = pointKey(endpoint.coordinate.x, endpoint.coordinate.y)
+  const connectedSections = (endpointGroups[coordinateKey] ?? []).filter((entry) => entry.sectionId !== section.id)
+  const connectedToStation = endpoint.stationConnection
+    ? map.stations.some((station) => station.id === endpoint.stationConnection?.stationId)
+    : false
+  const connectedToRoute =
+    connectedToStation ||
+    connectedSections.length > 0 ||
+    (graph.adjacency[section.sectionNumber]?.length ?? 0) > 0
+
+  if (!connectedToRoute) {
+    return null
+  }
+
+  const endpointIsEntry = getDerivedEntranceMode(section.directionMode, endpointKey) === 'Allowed'
+  if (endpointIsEntry) {
+    return side === 'Left' ? 'Block' : 'Path'
+  }
+
+  return side === 'Left' ? 'Path' : 'Block'
+}
+
+export function buildRouteSignalSuggestionMap(map: Pick<MapDocument, 'sections' | 'stations'>): Map<string, SignalType | null> {
+  const suggestions = new Map<string, SignalType | null>()
+  const endpointGroups = buildEndpointGroups(map)
+  const graph = buildSectionConnectivityGraph(map)
+
+  for (const section of map.sections) {
+    for (const endpointKey of ['endpoint1', 'endpoint2'] as const) {
+      for (const side of ['Left', 'Right'] as const) {
+        suggestions.set(
+          `${section.id}:${endpointKey}:${side}`,
+          getRouteSuggestedSignalType(map, section, endpointKey, side, endpointGroups, graph),
+        )
+      }
+    }
+  }
+
+  return suggestions
 }
 
 function getSignalSocketKey(ref: NonNullable<MapDocument['signals'][number]['socketA']>): string {
@@ -205,7 +247,7 @@ export function getJunctionDisplayLabel(type: JunctionType, displayNumber: numbe
   return `Invalid ${displayNumber}`
 }
 
-function buildEndpointGroups(map: MapDocument): Record<string, Array<{ sectionId: string; endpointKey: SectionEndpointKey }>> {
+function buildEndpointGroups(map: Pick<MapDocument, 'sections'>): Record<string, Array<{ sectionId: string; endpointKey: SectionEndpointKey }>> {
   const grouped: Record<string, Array<{ sectionId: string; endpointKey: SectionEndpointKey }>> = {}
 
   for (const section of map.sections) {
@@ -421,6 +463,7 @@ export function buildConnectionReview(map: MapDocument): ConnectionReview {
   const signalConnectivity: ConnectionReview['signalConnectivity'] = {}
 
   const endpointGroups = buildEndpointGroups(map)
+  const routeSignalSuggestions = buildRouteSignalSuggestionMap(map)
   const stationById = new Map(map.stations.map((station) => [station.id, station]))
   const signalSocketLookup = buildSignalSocketLookup(map)
   const junctionMetadata = buildJunctionMetadata(map)
@@ -516,20 +559,20 @@ export function buildConnectionReview(map: MapDocument): ConnectionReview {
 
       for (const slot of endpointSignals) {
         const socketState = getEndpointSignalSocketState(section, key, slot.side)
-        const expectedSignalType = getEndpointSignalType(section, key, slot.side)
+        const expectedSignalType = socketState.expectedType ?? routeSignalSuggestions.get(`${section.id}:${key}:${slot.side}`) ?? null
         const socketKey = `${section.id}:${key}:${slot.side}`
         const attachedSignal = signalSocketLookup.get(socketKey)
 
-        if (socketState.state === 'Removed') {
+        if (socketState.state === 'Off') {
           if (attachedSignal) {
             signalInvalidCount += 1
             issues.push({
-              id: `signal-removed-slot-attached-${section.id}-${key}-${slot.side}`,
+              id: `signal-off-slot-attached-${section.id}-${key}-${slot.side}`,
               severity: 'error',
               code: 'INVALID_SIGNAL_ATTACHMENT',
               entityType: 'section',
               entityId: section.id,
-              message: `Section ${section.sectionNumber} has a signal attached at ${key}.${slot.side}, but that socket is marked Removed.`,
+              message: `Section ${section.sectionNumber} has a signal attached at ${key}.${slot.side}, but that socket is turned Off.`,
             })
           }
           continue
@@ -698,7 +741,7 @@ export function buildConnectionReview(map: MapDocument): ConnectionReview {
         continue
       }
 
-      const slotType = getEndpointSignalType(section, socket.endpointKey, socket.side)
+      const slotType = routeSignalSuggestions.get(`${section.id}:${socket.endpointKey}:${socket.side}`) ?? getEndpointSignalType(section, socket.endpointKey, socket.side)
       if (slotType !== signal.signalType) {
         invalid = true
         issues.push({
@@ -836,6 +879,7 @@ export function normalizeMapMetadata(map: MapDocument): { fixes: string[] } {
   const fixes: string[] = []
   const stationById = new Map(map.stations.map((station) => [station.id, station]))
   const endpointGroups = buildEndpointGroups(map)
+  const routeSignalSuggestions = buildRouteSignalSuggestionMap(map)
   const signalSocketLookup = buildSignalSocketLookup(map)
 
   const legacyInvalidStyle = {
@@ -908,59 +952,36 @@ export function normalizeMapMetadata(map: MapDocument): { fixes: string[] } {
       const endpoint = endpointKey === 'endpoint1' ? section.endpoint1 : section.endpoint2
       if (!endpoint.signalSockets) {
         endpoint.signalSockets = {
-          Left: { state: 'Suggested', expectedType: null, overrideType: null },
-          Right: { state: 'Suggested', expectedType: null, overrideType: null },
+          Left: { state: 'Suggested', expectedType: null },
+          Right: { state: 'Suggested', expectedType: null },
         }
         fixes.push(`Added default signal socket metadata for section ${section.sectionNumber} ${endpointKey}.`)
       }
 
       for (const side of ['Left', 'Right'] as const) {
-        const legacySignalType = side === 'Left' ? endpoint.signal1 : endpoint.signal2
         const socketKey = `${section.id}:${endpointKey}:${side}`
         const attachedSignal = signalSocketLookup.get(socketKey)
         const currentSocket = endpoint.signalSockets[side] ?? {
           state: 'Suggested',
           expectedType: null,
-          overrideType: null,
         }
+        const routeSuggestedType = routeSignalSuggestions.get(socketKey) ?? null
 
         if (attachedSignal) {
           endpoint.signalSockets[side] = {
             state: 'Implemented',
-            expectedType: currentSocket.expectedType ?? legacySignalType ?? attachedSignal.signalType,
-            overrideType: null,
+            expectedType: currentSocket.expectedType ?? routeSuggestedType ?? attachedSignal.signalType,
           }
-        } else if (currentSocket.state === 'Removed') {
+        } else if (currentSocket.state === 'Off') {
           endpoint.signalSockets[side] = {
-            state: 'Removed',
-            expectedType: currentSocket.expectedType ?? legacySignalType,
-            overrideType: null,
-          }
-        } else if (currentSocket.state === 'Overridden') {
-          endpoint.signalSockets[side] = {
-            state: 'Overridden',
-            expectedType: currentSocket.expectedType ?? legacySignalType,
-            overrideType: currentSocket.overrideType ?? legacySignalType,
+            state: 'Off',
+            expectedType: currentSocket.expectedType ?? routeSuggestedType,
           }
         } else {
           endpoint.signalSockets[side] = {
             state: 'Suggested',
-            expectedType: currentSocket.expectedType ?? legacySignalType,
-            overrideType: null,
+            expectedType: currentSocket.expectedType ?? routeSuggestedType,
           }
-        }
-
-        const effectiveSignalType =
-          endpoint.signalSockets[side].state === 'Removed'
-            ? null
-            : endpoint.signalSockets[side].state === 'Overridden'
-              ? endpoint.signalSockets[side].overrideType
-              : endpoint.signalSockets[side].expectedType
-
-        if (side === 'Left') {
-          endpoint.signal1 = effectiveSignalType
-        } else {
-          endpoint.signal2 = effectiveSignalType
         }
       }
     }

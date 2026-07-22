@@ -1,0 +1,622 @@
+{
+  "schemaVersion": 1,
+  "lastUpdatedIso": "2026-07-21T02:03:38.262Z",
+  "settings": {
+    "title": "Main Rail Network",
+    "worldWidth": 1000,
+    "worldHeight": 1000,
+    "defaultSectionColor": "#da0fec",
+    "junctionNumberOverrides": [],
+    "editorState": {
+      "viewport": {
+        "zoom": 1.6325867520000001,
+        "panX": 347,
+        "panY": 166
+      },
+      "lastSelected": {
+        "entityType": "section",
+        "id": "section-97c618c9-3c50-4782-85d2-39ba5b9dfd44"
+      },
+      "panels": {
+        "topbarCollapsed": true,
+        "sidebarCollapsed": false,
+        "inspectorCollapsed": false,
+        "sidebarWidth": 260,
+        "inspectorWidth": 732,
+        "workspacePanelDock": "Left",
+        "stationSelectorDock": "Right",
+        "workspacePanelSize": 440,
+        "stationSelectorSize": 255
+      },
+      "inspectorSections": {
+        "mapUi": false,
+        "selection": false,
+        "connectivity": true,
+        "review": true,
+        "relocate": true,
+        "totals": true,
+        "legend": true
+      },
+      "displayToggles": {
+        "showSectionLabels": true,
+        "showSignalEndpoints": true,
+        "showDirectionalIndicators": true,
+        "showValidationIcons": false
+      }
+    },
+    "labelStyles": {
+      "section": {
+        "shape": "Circle",
+        "width": 20,
+        "height": 20,
+        "radius": 10,
+        "backgroundColor": "#000000",
+        "borderColor": "#e2e8f0",
+        "borderWidth": 1,
+        "textColor": "#ffffff",
+        "textSize": 8,
+        "textYOffset": 0
+      },
+      "intersection": {
+        "shape": "Circle",
+        "width": 20,
+        "height": 20,
+        "radius": 10,
+        "backgroundColor": "#dc2626",
+        "borderColor": "#111827",
+        "borderWidth": 1.1,
+        "textColor": "#ffffff",
+        "textSize": 8,
+        "textYOffset": 0
+      },
+      "junction": {
+        "Merge": {
+          "shape": "Rectangle",
+          "width": 14,
+          "height": 14,
+          "radius": 7,
+          "backgroundColor": "#64748b",
+          "borderColor": "#0f172a",
+          "borderWidth": 1.2,
+          "textColor": "#ffffff",
+          "textSize": 7,
+          "textYOffset": 0
+        },
+        "Split": {
+          "shape": "Triangle",
+          "width": 16,
+          "height": 16,
+          "radius": 8,
+          "backgroundColor": "#dc2626",
+          "borderColor": "#0f172a",
+          "borderWidth": 1.2,
+          "textColor": "#ffffff",
+          "textSize": 7,
+          "textYOffset": 0
+        },
+        "Junction": {
+          "shape": "Circle",
+          "width": 14,
+          "height": 14,
+          "radius": 7,
+          "backgroundColor": "#111827",
+          "borderColor": "#e2e8f0",
+          "borderWidth": 1.2,
+          "textColor": "#ffffff",
+          "textSize": 7,
+          "textYOffset": 0
+        },
+        "Invalid": {
+          "shape": "Diamond",
+          "width": 16,
+          "height": 16,
+          "radius": 8,
+          "backgroundColor": "#475569",
+          "borderColor": "#0f172a",
+          "borderWidth": 1.2,
+          "textColor": "#ffffff",
+          "textSize": 7,
+          "textYOffset": 0
+        },
+        "Undefined": {
+          "shape": "Diamond",
+          "width": 16,
+          "height": 16,
+          "radius": 8,
+          "backgroundColor": "#475569",
+          "borderColor": "#0f172a",
+          "borderWidth": 1.2,
+          "textColor": "#ffffff",
+          "textSize": 7,
+          "textYOffset": 0
+        }
+      }
+    }
+  },
+  "stations": [
+    {
+      "id": "station-04b3fb4f-da61-45fa-b7e2-a55d55484ef4",
+      "stationName": "Station 1",
+      "stationNumber": 1,
+      "color": "#c7d2fe",
+      "layoutDirection": "HorizontalMetaRight",
+      "sectionInNumber": 3,
+      "sectionOutNumber": 2,
+      "inbound": {
+        "x": 215,
+        "y": -103
+      },
+      "outbound": {
+        "x": 295,
+        "y": -103
+      },
+      "liquidFreightStationCount": 0,
+      "solidFreightStationCount": 1,
+      "freightStationSequence": [
+        {
+          "slotIndex": 1,
+          "stationType": "Freight",
+          "mode": "Unload",
+          "material": ""
+        }
+      ],
+      "freightSectionMaterials": [],
+      "notes": ""
+    },
+    {
+      "id": "station-2dc539fc-601d-4ccb-9c94-9c2c25be0163",
+      "stationName": "Station 2",
+      "stationNumber": 2,
+      "color": "#c7d2fe",
+      "layoutDirection": "VerticalMetaTop",
+      "sectionInNumber": 2,
+      "sectionOutNumber": 6,
+      "inbound": {
+        "x": 897.8999999999996,
+        "y": -168.50612754529118
+      },
+      "outbound": {
+        "x": 977.8999999999996,
+        "y": -168.50612754529118
+      },
+      "liquidFreightStationCount": 0,
+      "solidFreightStationCount": 1,
+      "freightStationSequence": [
+        {
+          "slotIndex": 1,
+          "stationType": "Freight",
+          "mode": "Unload",
+          "material": ""
+        }
+      ],
+      "freightSectionMaterials": [],
+      "notes": ""
+    },
+    {
+      "id": "station-366842cc-4f9a-4696-8709-61ba4f627f06",
+      "stationName": "Station 3",
+      "stationNumber": 3,
+      "color": "#c7d2fe",
+      "layoutDirection": "HorizontalMetaLeft",
+      "sectionInNumber": 1,
+      "sectionOutNumber": 7,
+      "inbound": {
+        "x": 470.7333333333331,
+        "y": -538.1362521692884
+      },
+      "outbound": {
+        "x": 550.7333333333331,
+        "y": -538.1362521692884
+      },
+      "liquidFreightStationCount": 0,
+      "solidFreightStationCount": 1,
+      "freightStationSequence": [
+        {
+          "slotIndex": 1,
+          "stationType": "Freight",
+          "mode": "Unload",
+          "material": ""
+        }
+      ],
+      "freightSectionMaterials": [],
+      "notes": ""
+    },
+    {
+      "id": "station-698735ce-b4a9-4902-909f-f8ee52bf3243",
+      "stationName": "Station 4",
+      "stationNumber": 4,
+      "color": "#c7d2fe",
+      "layoutDirection": "HorizontalMetaRight",
+      "sectionInNumber": null,
+      "sectionOutNumber": 8,
+      "inbound": {
+        "x": 60,
+        "y": 200
+      },
+      "outbound": {
+        "x": 140,
+        "y": 200
+      },
+      "liquidFreightStationCount": 0,
+      "solidFreightStationCount": 1,
+      "freightStationSequence": [
+        {
+          "slotIndex": 1,
+          "stationType": "Freight",
+          "mode": "Unload",
+          "material": ""
+        }
+      ],
+      "freightSectionMaterials": [],
+      "notes": ""
+    }
+  ],
+  "sections": [
+    {
+      "id": "section-a990fd82-ec1e-4363-a88a-327537428c0b",
+      "sectionNumber": 1,
+      "sectionName": "1",
+      "color": "#da0fec",
+      "sectionKind": "Curved",
+      "directionMode": "OneWay2To1",
+      "curveBendMin": 0,
+      "curveBendMax": 480,
+      "curveBend": -48.92739585188462,
+      "endpoint1": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": 607,
+          "y": -538
+        },
+        "stationConnection": {
+          "stationId": "station-366842cc-4f9a-4696-8709-61ba4f627f06",
+          "side": "Left"
+        },
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          }
+        },
+        "entranceMode": "Blocked"
+      },
+      "endpoint2": {
+        "sectionNumber": 4,
+        "coordinate": {
+          "x": 865.5999999999999,
+          "y": -322.5336284578759
+        },
+        "stationConnection": null,
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          }
+        },
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-97c618c9-3c50-4782-85d2-39ba5b9dfd44",
+      "sectionNumber": 2,
+      "sectionName": "2",
+      "color": "#da0fec",
+      "sectionKind": "Curved",
+      "directionMode": "OneWay1To2",
+      "curveBendMin": 0,
+      "curveBendMax": 480,
+      "curveBend": 100.57172312814228,
+      "endpoint1": {
+        "sectionNumber": 2,
+        "coordinate": {
+          "x": 351,
+          "y": -103
+        },
+        "stationConnection": {
+          "stationId": "station-04b3fb4f-da61-45fa-b7e2-a55d55484ef4",
+          "side": "Right"
+        },
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          }
+        },
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 2,
+        "coordinate": {
+          "x": 937.8999999999996,
+          "y": -124.50612754529118
+        },
+        "stationConnection": {
+          "stationId": "station-2dc539fc-601d-4ccb-9c94-9c2c25be0163",
+          "side": "Left"
+        },
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          }
+        },
+        "entranceMode": "Blocked"
+      }
+    },
+    {
+      "id": "section-dc9d342d-4970-412d-aad1-81ae30232cbe",
+      "sectionNumber": 3,
+      "sectionName": "3",
+      "color": "#da0fec",
+      "sectionKind": "Curved",
+      "directionMode": "OneWay1To2",
+      "curveBendMin": 0,
+      "curveBendMax": 480,
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 4,
+        "coordinate": {
+          "x": 188.39999999999998,
+          "y": -413.9
+        },
+        "stationConnection": null,
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          }
+        },
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 3,
+        "coordinate": {
+          "x": 159,
+          "y": -103
+        },
+        "stationConnection": {
+          "stationId": "station-04b3fb4f-da61-45fa-b7e2-a55d55484ef4",
+          "side": "Left"
+        },
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          }
+        },
+        "entranceMode": "Blocked"
+      }
+    },
+    {
+      "id": "section-f65ce747-e517-4646-8fca-8166ab2be93a",
+      "sectionNumber": 4,
+      "sectionName": "4",
+      "color": "#da0fec",
+      "sectionKind": "Curved",
+      "directionMode": "Bidirectional",
+      "curveBendMin": 0,
+      "curveBendMax": 480,
+      "curveBend": 47.74825464122084,
+      "endpoint1": {
+        "sectionNumber": 3,
+        "coordinate": {
+          "x": 188,
+          "y": -414
+        },
+        "stationConnection": null,
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          }
+        },
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": 866,
+          "y": -323
+        },
+        "stationConnection": null,
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          }
+        },
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-3c87a9e8-6297-405d-8843-1ef8564a1f60",
+      "sectionNumber": 6,
+      "sectionName": "6",
+      "color": "#da0fec",
+      "sectionKind": "Straight",
+      "directionMode": "OneWay2To1",
+      "curveBendMin": 0,
+      "curveBendMax": 480,
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 1,
+        "coordinate": {
+          "x": 865.5999999999999,
+          "y": -322.5336284578759
+        },
+        "stationConnection": null,
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          }
+        },
+        "entranceMode": "Blocked"
+      },
+      "endpoint2": {
+        "sectionNumber": 6,
+        "coordinate": {
+          "x": 937.8999999999996,
+          "y": -212.50612754529118
+        },
+        "stationConnection": {
+          "stationId": "station-2dc539fc-601d-4ccb-9c94-9c2c25be0163",
+          "side": "Right"
+        },
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          }
+        },
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-227b1fcb-b813-4d41-b51d-541d7561bff6",
+      "sectionNumber": 7,
+      "sectionName": "7",
+      "color": "#da0fec",
+      "sectionKind": "Curved",
+      "directionMode": "OneWay2To1",
+      "curveBendMin": 0,
+      "curveBendMax": 480,
+      "curveBend": -77.0998951327481,
+      "endpoint1": {
+        "sectionNumber": 3,
+        "coordinate": {
+          "x": 188,
+          "y": -414
+        },
+        "stationConnection": null,
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          }
+        },
+        "entranceMode": "Blocked"
+      },
+      "endpoint2": {
+        "sectionNumber": 7,
+        "coordinate": {
+          "x": 414.7333333333331,
+          "y": -538.1362521692884
+        },
+        "stationConnection": {
+          "stationId": "station-366842cc-4f9a-4696-8709-61ba4f627f06",
+          "side": "Right"
+        },
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          }
+        },
+        "entranceMode": "Allowed"
+      }
+    },
+    {
+      "id": "section-e55eff8c-fbf5-46b3-810a-fb440ff56045",
+      "sectionNumber": 8,
+      "sectionName": "Section 8",
+      "color": "#da0fec",
+      "sectionKind": "Straight",
+      "directionMode": "Bidirectional",
+      "curveBendMin": 0,
+      "curveBendMax": 480,
+      "curveBend": 120,
+      "endpoint1": {
+        "sectionNumber": 8,
+        "coordinate": {
+          "x": 196,
+          "y": 200
+        },
+        "stationConnection": {
+          "stationId": "station-698735ce-b4a9-4902-909f-f8ee52bf3243",
+          "side": "Right"
+        },
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": "Block"
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": "Path"
+          }
+        },
+        "entranceMode": "Allowed"
+      },
+      "endpoint2": {
+        "sectionNumber": 8,
+        "coordinate": {
+          "x": 539.0433371003513,
+          "y": 194.4879409413403
+        },
+        "stationConnection": null,
+        "signalSockets": {
+          "Left": {
+            "state": "Suggested",
+            "expectedType": null
+          },
+          "Right": {
+            "state": "Suggested",
+            "expectedType": null
+          }
+        },
+        "entranceMode": "Allowed"
+      }
+    }
+  ],
+  "intersections": [],
+  "signals": []
+}

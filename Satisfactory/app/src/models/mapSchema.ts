@@ -3,7 +3,7 @@ import { z } from 'zod'
 export const signalTypeSchema = z.enum(['Block', 'Path'])
 export type SignalType = z.infer<typeof signalTypeSchema>
 
-export const signalSocketStateSchema = z.enum(['Suggested', 'Implemented', 'Removed', 'Overridden'])
+export const signalSocketStateSchema = z.enum(['Suggested', 'Implemented', 'Off'])
 export type SignalSocketState = z.infer<typeof signalSocketStateSchema>
 
 export const freightStationTypeSchema = z.enum(['Freight', 'Liquid'])
@@ -71,43 +71,35 @@ const endpointSchema = z.object({
     })
     .nullable()
     .default(null),
-  signal1: signalTypeSchema.nullable(),
-  signal2: signalTypeSchema.nullable(),
   signalSockets: z
     .object({
       Left: z
         .object({
           state: signalSocketStateSchema.default('Suggested'),
           expectedType: signalTypeSchema.nullable().default(null),
-          overrideType: signalTypeSchema.nullable().default(null),
         })
         .default({
           state: 'Suggested',
           expectedType: null,
-          overrideType: null,
         }),
       Right: z
         .object({
           state: signalSocketStateSchema.default('Suggested'),
           expectedType: signalTypeSchema.nullable().default(null),
-          overrideType: signalTypeSchema.nullable().default(null),
         })
         .default({
           state: 'Suggested',
           expectedType: null,
-          overrideType: null,
         }),
     })
     .default({
       Left: {
         state: 'Suggested',
         expectedType: null,
-        overrideType: null,
       },
       Right: {
         state: 'Suggested',
         expectedType: null,
-        overrideType: null,
       },
     }),
   entranceMode: z.enum(['Allowed', 'Blocked']),
@@ -307,6 +299,7 @@ const panelStateSchema = z.object({
   topbarCollapsed: z.boolean().default(false),
   sidebarCollapsed: z.boolean().default(false),
   inspectorCollapsed: z.boolean().default(false),
+  showStationSelectorPanel: z.boolean().default(true),
   sidebarWidth: z.number().int().min(180).max(720).default(260),
   inspectorWidth: z.number().int().min(260).max(900).default(600),
   workspacePanelDock: z.enum(['Top', 'Right', 'Bottom', 'Left']).default('Top'),
@@ -332,6 +325,12 @@ const displayToggleStateSchema = z.object({
   showValidationIcons: z.boolean().default(true),
 })
 
+const signalEndpointChannelStyleSchema = z.object({
+  color: z.string().default('#38bdf8'),
+  length: z.number().int().min(20).max(280).default(80),
+  width: z.number().int().min(6).max(60).default(16),
+})
+
 const editorStateSchema = z.object({
   viewport: viewportStateSchema.default({
     zoom: 1,
@@ -343,6 +342,7 @@ const editorStateSchema = z.object({
     topbarCollapsed: false,
     sidebarCollapsed: false,
     inspectorCollapsed: false,
+    showStationSelectorPanel: true,
     sidebarWidth: 260,
     inspectorWidth: 600,
     workspacePanelDock: 'Top',
@@ -407,6 +407,11 @@ export const mapSettingsSchema = z.object({
   worldWidth: z.number().int().positive().default(100),
   worldHeight: z.number().int().positive().default(100),
   defaultSectionColor: z.string().default('#da0fec'),
+  signalEndpointChannelStyle: signalEndpointChannelStyleSchema.default({
+    color: '#38bdf8',
+    length: 40,
+    width: 16,
+  }),
   junctionNumberOverrides: z.array(junctionNumberOverrideSchema).default([]),
   editorState: editorStateSchema.default({
     viewport: {
@@ -419,6 +424,7 @@ export const mapSettingsSchema = z.object({
       topbarCollapsed: false,
       sidebarCollapsed: false,
       inspectorCollapsed: false,
+      showStationSelectorPanel: true,
       sidebarWidth: 260,
       inspectorWidth: 600,
       workspacePanelDock: 'Top',
@@ -557,8 +563,8 @@ export function createDefaultMap(): MapDocument {
     lastUpdatedIso: new Date().toISOString(),
     settings: mapSettingsSchema.parse({
       title: 'Main Rail Network',
-      worldWidth: 100,
-      worldHeight: 100,
+      worldWidth: 1000,
+      worldHeight: 1000,
       defaultSectionColor: '#da0fec',
       junctionNumberOverrides: [],
       editorState: {

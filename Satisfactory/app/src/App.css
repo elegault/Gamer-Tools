@@ -7,9 +7,9 @@
 }
 
 .topbar {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   gap: 1rem;
   padding: 1.4rem 1.5rem;
   border-bottom: 1px solid #31435c;
@@ -20,6 +20,61 @@
   align-items: center;
   padding-top: 0.75rem;
   padding-bottom: 0.75rem;
+}
+
+.topbar-main {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.topbar-mapui-card {
+  width: 100%;
+  margin-top: 0.2rem;
+}
+
+.topbar-mapui-body {
+  display: flex;
+  align-items: end;
+  flex-wrap: nowrap;
+  gap: 0.55rem;
+  overflow-x: auto;
+}
+
+.topbar-mapui-field {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.74rem;
+  color: #b8c9e8;
+  flex: 0 0 auto;
+}
+
+.topbar-mapui-title-field input {
+  width: 13.5rem;
+}
+
+.topbar-mapui-number-field input {
+  width: 6.6rem;
+}
+
+.topbar-mapui-actions {
+  margin-top: 0;
+  display: inline-flex;
+  align-items: end;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+}
+
+.topbar-mapui-actions button,
+.topbar-mapui-actions .danger-button,
+.topbar-mapui-actions .file-import {
+  width: auto;
+}
+
+.topbar-mapui-actions .file-import {
+  min-width: 8.4rem;
 }
 
 .topbar-copy,
@@ -173,6 +228,10 @@
 }
 
 .topbar.collapsed .status-pill {
+  display: none;
+}
+
+.topbar.collapsed .topbar-mapui-card {
   display: none;
 }
 
@@ -405,6 +464,24 @@ body.is-resizing-panels-vertical * {
   flex-direction: column;
 }
 
+.workspace-toolbar-main {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.workspace-toolbar-panel.dock-vertical .workspace-toolbar-main {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.workspace-toolbar-panel.dock-horizontal .workspace-toolbar-main {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
 .workspace-toolbar-panel.dock-vertical .view-controls {
   flex-direction: column;
   align-items: stretch;
@@ -431,13 +508,23 @@ body.is-resizing-panels-vertical * {
 
 .display-toggle-toolbar {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 0.55rem;
   padding: 0.3rem 0.45rem;
   border: 1px solid #3f5273;
   border-radius: 0.55rem;
   background: rgba(8, 18, 30, 0.8);
+}
+
+.display-toggle-toolbar.flow-horizontal {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.display-toggle-toolbar.flow-vertical {
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .display-toggle-toolbar label {
@@ -505,6 +592,10 @@ body.is-resizing-panels-vertical * {
   background: rgba(10, 23, 37, 0.82);
   display: grid;
   gap: 0.45rem;
+}
+
+.workspace-toolbar-panel .workspace-station-strip {
+  width: 100%;
 }
 
 .workspace-station-strip.dock-vertical {
@@ -762,6 +853,12 @@ body.is-resizing-panels-vertical * {
   color: #fecaca;
 }
 
+.signal-socket-hint {
+  margin-top: -0.1rem;
+  font-size: 0.7rem;
+  color: #8fb7d8;
+}
+
 input,
 textarea,
 button {
@@ -783,6 +880,28 @@ textarea,
   margin-top: 1rem;
   display: grid;
   gap: 0.65rem;
+}
+
+.topbar-mapui-body .topbar-mapui-actions {
+  margin-top: 0;
+  display: inline-flex;
+  align-items: end;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+}
+
+.topbar-mapui-body .topbar-mapui-actions button,
+.topbar-mapui-body .topbar-mapui-actions .danger-button,
+.topbar-mapui-body .topbar-mapui-actions .file-import {
+  width: auto;
+}
+
+.topbar-mapui-body .topbar-mapui-actions .file-import {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 8.4rem;
 }
 
 .inspector-section-card {

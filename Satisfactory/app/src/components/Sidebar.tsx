@@ -40,6 +40,7 @@ type JunctionType = 'Merge' | 'Split' | 'Junction' | 'Invalid'
 
 type AppSettingsDraft = {
   defaultSectionColor: string
+  signalEndpointChannelStyle: MapSettings['signalEndpointChannelStyle']
   labelStyles: MapSettings['labelStyles']
 }
 
@@ -179,6 +180,7 @@ export function Sidebar({
     setDraftSettings(
       cloneDraft({
         defaultSectionColor: map.settings.defaultSectionColor,
+        signalEndpointChannelStyle: map.settings.signalEndpointChannelStyle,
         labelStyles: map.settings.labelStyles,
       }),
     )
@@ -199,6 +201,7 @@ export function Sidebar({
 
     updateMapSettings({
       defaultSectionColor: draftSettings.defaultSectionColor,
+      signalEndpointChannelStyle: draftSettings.signalEndpointChannelStyle,
       labelStyles: draftSettings.labelStyles,
     })
     setSaveFeedback('Settings saved.')
@@ -327,7 +330,7 @@ export function Sidebar({
               <div className="tool-list" role="list">
                 <button type="button" className="tool-button" onClick={openSettingsDialog}>
                   <span>App Settings</span>
-                  <small>Configure default label styles and section colors</small>
+                  <small>Configure label styles, section defaults, and signal endpoint channels</small>
                 </button>
               </div>
             </div>
@@ -360,6 +363,76 @@ export function Sidebar({
                             ? {
                                 ...current,
                                 defaultSectionColor: event.target.value,
+                              }
+                            : current,
+                        )
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="settings-subsection">
+                <h4>Signal Endpoint Channel Settings</h4>
+                <div className="form-grid compact-grid settings-grid">
+                  <label>
+                    <span>Channel Line Color</span>
+                    <input
+                      type="color"
+                      value={draftSettings.signalEndpointChannelStyle.color}
+                      onChange={(event) =>
+                        setDraftSettings((current) =>
+                          current
+                            ? {
+                                ...current,
+                                signalEndpointChannelStyle: {
+                                  ...current.signalEndpointChannelStyle,
+                                  color: event.target.value,
+                                },
+                              }
+                            : current,
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>Channel Line Length</span>
+                    <input
+                      type="number"
+                      min={20}
+                      max={280}
+                      value={draftSettings.signalEndpointChannelStyle.length}
+                      onChange={(event) =>
+                        setDraftSettings((current) =>
+                          current
+                            ? {
+                                ...current,
+                                signalEndpointChannelStyle: {
+                                  ...current.signalEndpointChannelStyle,
+                                  length: Math.max(20, Math.min(280, Math.round(Number(event.target.value) || 20))),
+                                },
+                              }
+                            : current,
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>Channel Line Width</span>
+                    <input
+                      type="number"
+                      min={6}
+                      max={60}
+                      value={draftSettings.signalEndpointChannelStyle.width}
+                      onChange={(event) =>
+                        setDraftSettings((current) =>
+                          current
+                            ? {
+                                ...current,
+                                signalEndpointChannelStyle: {
+                                  ...current.signalEndpointChannelStyle,
+                                  width: Math.max(6, Math.min(60, Math.round(Number(event.target.value) || 6))),
+                                },
                               }
                             : current,
                         )

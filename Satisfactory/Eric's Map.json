@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastUpdatedIso": "2026-07-19T00:33:11.724Z",
+  "lastUpdatedIso": "2026-07-20T03:50:02.069Z",
   "settings": {
     "title": "Eric's Railroad",
     "worldWidth": 1000,
@@ -85,32 +85,39 @@
     ],
     "editorState": {
       "viewport": {
-        "zoom": 1.3856832000000003,
-        "panX": -2058.831340244696,
-        "panY": -2110.116502535265
+        "zoom": 1.4800072219203466,
+        "panX": -3470.2296283858764,
+        "panY": -3006.5445668358702
       },
-      "lastSelected": null,
+      "lastSelected": {
+        "entityType": "station",
+        "id": "station-a763754d-0467-4411-9524-95abf0d7a729"
+      },
       "panels": {
         "topbarCollapsed": true,
-        "sidebarCollapsed": false,
+        "sidebarCollapsed": true,
         "inspectorCollapsed": false,
         "sidebarWidth": 260,
-        "inspectorWidth": 780
+        "inspectorWidth": 461,
+        "workspacePanelDock": "Left",
+        "stationSelectorDock": "Top",
+        "workspacePanelSize": 412,
+        "stationSelectorSize": 120
       },
       "inspectorSections": {
         "mapUi": false,
         "selection": false,
         "connectivity": false,
         "review": true,
-        "relocate": false,
+        "relocate": true,
         "totals": true,
         "legend": true
       },
       "displayToggles": {
         "showSectionLabels": true,
-        "showSignalEndpoints": false,
+        "showSignalEndpoints": true,
         "showDirectionalIndicators": true,
-        "showValidationIcons": false
+        "showValidationIcons": true
       }
     },
     "labelStyles": {
@@ -250,15 +257,15 @@
       "stationNumber": 1,
       "color": "#c7d2fe",
       "layoutDirection": "VerticalMetaTop",
-      "sectionInNumber": null,
+      "sectionInNumber": 7,
       "sectionOutNumber": 8,
       "inbound": {
-        "x": 616.2272766753038,
-        "y": 2189.162763145573
+        "x": 603.5869062257677,
+        "y": 2165.2894267124834
       },
       "outbound": {
-        "x": 696.2272766753038,
-        "y": 2189.162763145573
+        "x": 683.5869062257677,
+        "y": 2165.2894267124834
       },
       "liquidFreightStationCount": 0,
       "solidFreightStationCount": 1,
@@ -267,7 +274,13 @@
           "slotIndex": 1,
           "stationType": "Freight",
           "mode": "Load",
-          "material": ""
+          "material": "Sulfur"
+        },
+        {
+          "slotIndex": 2,
+          "stationType": "Freight",
+          "mode": "Load",
+          "material": "Quartz"
         }
       ],
       "freightSectionMaterials": [],
@@ -297,6 +310,12 @@
           "stationType": "Freight",
           "mode": "Load",
           "material": ""
+        },
+        {
+          "slotIndex": 2,
+          "stationType": "Freight",
+          "mode": "Load",
+          "material": "Quartz"
         }
       ],
       "freightSectionMaterials": [],
@@ -324,7 +343,13 @@
         {
           "slotIndex": 1,
           "stationType": "Freight",
-          "mode": "Unload",
+          "mode": "Load",
+          "material": "Bauxite"
+        },
+        {
+          "slotIndex": 2,
+          "stationType": "Liquid",
+          "mode": "Load",
           "material": ""
         }
       ],
@@ -353,7 +378,7 @@
         {
           "slotIndex": 1,
           "stationType": "Freight",
-          "mode": "Unload",
+          "mode": "Load",
           "material": ""
         }
       ],
@@ -381,18 +406,6 @@
       "freightStationSequence": [
         {
           "slotIndex": 1,
-          "stationType": "Freight",
-          "mode": "Unload",
-          "material": ""
-        },
-        {
-          "slotIndex": 2,
-          "stationType": "Freight",
-          "mode": "Load",
-          "material": ""
-        },
-        {
-          "slotIndex": 3,
           "stationType": "Freight",
           "mode": "Load",
           "material": ""
@@ -423,8 +436,20 @@
         {
           "slotIndex": 1,
           "stationType": "Freight",
-          "mode": "Unload",
+          "mode": "Load",
           "material": ""
+        },
+        {
+          "slotIndex": 2,
+          "stationType": "Freight",
+          "mode": "Load",
+          "material": ""
+        },
+        {
+          "slotIndex": 3,
+          "stationType": "Liquid",
+          "mode": "Load",
+          "material": "Nitrogen"
         }
       ],
       "freightSectionMaterials": [],
@@ -452,7 +477,7 @@
         {
           "slotIndex": 1,
           "stationType": "Freight",
-          "mode": "Unload",
+          "mode": "Load",
           "material": ""
         }
       ],
@@ -705,8 +730,8 @@
       "endpoint1": {
         "sectionNumber": 11,
         "coordinate": {
-          "x": -799.9035868967325,
-          "y": 1900.045651661929
+          "x": -800,
+          "y": 1900
         },
         "stationConnection": null,
         "signal1": null,
@@ -959,10 +984,13 @@
       "endpoint2": {
         "sectionNumber": 7,
         "coordinate": {
-          "x": 656,
-          "y": 2233
+          "x": 643.5869062257677,
+          "y": 2209.2894267124834
         },
-        "stationConnection": null,
+        "stationConnection": {
+          "stationId": "station-183d0d74-ccf9-45c1-98a0-ea74806c56fa",
+          "side": "Left"
+        },
         "signal1": null,
         "signal2": null,
         "signalSockets": {
@@ -1533,7 +1561,7 @@
         "entranceMode": "Allowed"
       },
       "endpoint2": {
-        "sectionNumber": 22,
+        "sectionNumber": 13,
         "coordinate": {
           "x": -820,
           "y": 1654
@@ -1595,8 +1623,8 @@
       "endpoint2": {
         "sectionNumber": 8,
         "coordinate": {
-          "x": 656,
-          "y": 2145
+          "x": 643.5869062257677,
+          "y": 2121.2894267124834
         },
         "stationConnection": {
           "stationId": "station-183d0d74-ccf9-45c1-98a0-ea74806c56fa",
@@ -1776,7 +1804,7 @@
         "entranceMode": "Allowed"
       },
       "endpoint2": {
-        "sectionNumber": 36,
+        "sectionNumber": 39,
         "coordinate": {
           "x": -378,
           "y": 1315
@@ -1870,7 +1898,7 @@
       "curveBendMax": 480,
       "curveBend": 17.81571335426858,
       "endpoint1": {
-        "sectionNumber": 38,
+        "sectionNumber": 42,
         "coordinate": {
           "x": -1608,
           "y": 1388
@@ -1953,7 +1981,7 @@
         "entranceMode": "Allowed"
       },
       "endpoint2": {
-        "sectionNumber": 39,
+        "sectionNumber": 36,
         "coordinate": {
           "x": -378,
           "y": 1315
@@ -1987,7 +2015,7 @@
       "curveBendMax": 480,
       "curveBend": 177.1841580507624,
       "endpoint1": {
-        "sectionNumber": 40,
+        "sectionNumber": 36,
         "coordinate": {
           "x": -378,
           "y": 1315
@@ -2047,7 +2075,7 @@
       "curveBendMax": 480,
       "curveBend": 120,
       "endpoint1": {
-        "sectionNumber": 41,
+        "sectionNumber": 42,
         "coordinate": {
           "x": -1616,
           "y": 1305
@@ -2107,7 +2135,7 @@
       "curveBendMax": 480,
       "curveBend": -16.98147711974271,
       "endpoint1": {
-        "sectionNumber": 42,
+        "sectionNumber": 38,
         "coordinate": {
           "x": -1608,
           "y": 1388
@@ -2130,7 +2158,7 @@
         "entranceMode": "Allowed"
       },
       "endpoint2": {
-        "sectionNumber": 42,
+        "sectionNumber": 41,
         "coordinate": {
           "x": -1616,
           "y": 1305
@@ -2164,7 +2192,7 @@
       "curveBendMax": 480,
       "curveBend": -5.711457347627288,
       "endpoint1": {
-        "sectionNumber": 43,
+        "sectionNumber": 44,
         "coordinate": {
           "x": -1706,
           "y": 1301
@@ -2187,7 +2215,7 @@
         "entranceMode": "Allowed"
       },
       "endpoint2": {
-        "sectionNumber": 43,
+        "sectionNumber": 38,
         "coordinate": {
           "x": -1608,
           "y": 1388
@@ -2221,7 +2249,7 @@
       "curveBendMax": 480,
       "curveBend": 120,
       "endpoint1": {
-        "sectionNumber": 44,
+        "sectionNumber": 43,
         "coordinate": {
           "x": -1706,
           "y": 1301
@@ -2244,7 +2272,7 @@
         "entranceMode": "Allowed"
       },
       "endpoint2": {
-        "sectionNumber": 44,
+        "sectionNumber": 41,
         "coordinate": {
           "x": -1616,
           "y": 1305
@@ -2278,7 +2306,7 @@
       "curveBendMax": 480,
       "curveBend": 120,
       "endpoint1": {
-        "sectionNumber": 45,
+        "sectionNumber": 46,
         "coordinate": {
           "x": -2383,
           "y": 778.6938397960334
@@ -2301,7 +2329,7 @@
         "entranceMode": "Allowed"
       },
       "endpoint2": {
-        "sectionNumber": 45,
+        "sectionNumber": 43,
         "coordinate": {
           "x": -1706,
           "y": 1301
@@ -2361,7 +2389,7 @@
         "entranceMode": "Allowed"
       },
       "endpoint2": {
-        "sectionNumber": 46,
+        "sectionNumber": 45,
         "coordinate": {
           "x": -2383,
           "y": 778.6938397960334
@@ -2421,7 +2449,7 @@
         "entranceMode": "Blocked"
       },
       "endpoint2": {
-        "sectionNumber": 47,
+        "sectionNumber": 45,
         "coordinate": {
           "x": -2383,
           "y": 778.6938397960334
